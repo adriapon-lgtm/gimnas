@@ -293,6 +293,17 @@ h1, h2, h3 { letter-spacing: -0.01em; }
   font-size: 14px;
 }
 .check-list li + li { margin-top: 2px; }
+.check-list .has-anim { list-style: none; margin-left: -18px; }
+
+/* Desplegable petit dins d'una llista: el text fa de títol, amb un «veure» al costat. */
+.how.mini { margin: 0; }
+.how.mini summary { min-height: 36px; color: var(--muted); font-weight: 500; font-size: 14px; }
+.how.mini summary::before { content: "▸"; color: var(--accent); font-weight: 700; }
+.how.mini summary::after { content: "veure"; margin-left: 8px; color: var(--accent); font-size: 12px; font-weight: 700; }
+.how.mini[open] summary { color: var(--text); font-weight: 600; }
+.how.mini[open] summary::before { content: "▾"; }
+.how.mini[open] summary::after { content: "amaga"; }
+.how.mini .anim { margin: 4px 0 8px; }
 
 /* ---------- Exercicis ---------- */
 

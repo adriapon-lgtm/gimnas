@@ -7,12 +7,13 @@
 window.PLAN = {
   warmup: {
     time: '10 min',
+    // anim: animació que es pot desplegar des de la llista (clau d'anim.js).
     items: [
-      '5 min de bicicleta suau',
-      'Curl-up 1 × 5 (aguanta 8 s)',
-      'Planxa lateral 1 × 15 s per costat',
-      'Bird dog 1 × 5 per costat',
-      '1–2 sèries lleugeres del primer exercici',
+      { text: '5 min de bicicleta suau' },
+      { text: 'Curl-up 1 × 5 (aguanta 8 s)', anim: 'curlup' },
+      { text: 'Planxa lateral 1 × 15 s per costat', anim: 'sideplank' },
+      { text: 'Bird dog 1 × 5 per costat', anim: 'birddog' },
+      { text: '1–2 sèries lleugeres del primer exercici' },
     ],
   },
   days: [

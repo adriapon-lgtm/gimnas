@@ -247,7 +247,11 @@ function renderDays() {
 }
 
 function checkItem(field, title, sub, items, on) {
-  const list = items?.length ? `<ul class="check-list">${items.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>` : '';
+  // Els elements amb animació es poden desplegar per veure com es fan.
+  const item = (it) => (it.anim && window.ANIM?.has(it.anim)
+    ? `<li class="has-anim"><details class="how mini"><summary>${esc(it.text)}</summary><figure class="anim" data-anim="${esc(it.anim)}"></figure></details></li>`
+    : `<li>${esc(it.text ?? it)}</li>`);
+  const list = items?.length ? `<ul class="check-list">${items.map(item).join('')}</ul>` : '';
   return `<div class="check${on ? ' done' : ''}" data-field="${field}">
     <button type="button" class="check-btn" data-act="toggle" data-field="${field}" aria-pressed="${on}">
       <span class="box">${ICON_CHECK}</span>
