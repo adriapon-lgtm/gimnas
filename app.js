@@ -17,7 +17,6 @@ const DAYS = window.PLAN.days;
 const dayById = (id) => DAYS.find((d) => d.id === id);
 
 const ICON_CHECK = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
-const ICON_WARN = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l9.5 17h-19z"/><path d="M12 10v4.5"/><path d="M12 17.6v.1"/></svg>';
 
 // ---------- Utilitats ----------
 
@@ -235,7 +234,6 @@ const daysEl = $('#days');
 const trainEl = $('#train');
 const calendarEl = $('#calendar');
 const historyEl = $('#history');
-const progressEl = $('#progress');
 const lightbox = $('#lightbox');
 
 // ---------- Pantalla Entrenar ----------
@@ -382,11 +380,15 @@ function renderTrain() {
     parts.push(`<div class="banner"><span>${esc(state.restNote)}</span></div>`);
   }
 
-  parts.push(`<header class="session-head">
+  parts.push(`<header class="session-head" id="session-head">
     <p class="eyebrow">${day.id.toUpperCase()} · ${fmtLong(state.date)}</p>
     <h1>${esc(day.title)}</h1>
     <p class="focus">${esc(day.focus)}</p>
-    <p class="warn" role="note">${ICON_WARN}<span><b>Lumbar:</b> para si notes dolor que baixa per la cama, formigueig o dolor que dura més de 24 h.</span></p>
+    <div class="ring" role="img" aria-label="Progrés de la sessió">
+      <svg viewBox="0 0 72 72"><circle class="track" cx="36" cy="36" r="30"/><circle class="fill" id="progress-fill" cx="36" cy="36" r="30"/></svg>
+      <b id="progress-pct"></b>
+    </div>
+    <p class="progress-text" aria-live="polite"><span id="progress-label"></span></p>
   </header>`);
 
   parts.push(checkItem('warm', 'Escalfament', window.PLAN.warmup.time, window.PLAN.warmup.items, !!s?.warm));
@@ -404,8 +406,10 @@ function updateProgress() {
     ? '<b>Sessió completada</b>'
     : `<b>${done}</b> de ${total} completats`;
   $('#progress-pct').textContent = `${pct}%`;
-  $('#progress-fill').style.width = `${pct}%`;
-  progressEl.classList.toggle('complete', done === total);
+  const C = 2 * Math.PI * 30; // perímetre del cercle de l'anell
+  $('#progress-fill').style.strokeDasharray = C;
+  $('#progress-fill').style.strokeDashoffset = C * (1 - pct / 100);
+  $('#session-head').classList.toggle('complete', done === total);
   daysEl.querySelector(`[data-day="${state.day}"]`)?.classList.toggle('has-data', !!getSession());
 }
 
@@ -1111,7 +1115,7 @@ function backupDue() {
 }
 
 function updateBackupDot() {
-  document.querySelector('.tabs [data-screen="history"]').classList.toggle('dot', !!backupDue());
+  document.querySelector('.nav [data-screen="history"]').classList.toggle('dot', !!backupDue());
 }
 
 function exportFile() {
@@ -1198,16 +1202,17 @@ function mergeImport(data) {
 
 const SCREENS = { train: trainEl, calendar: calendarEl, stats: statsEl, history: historyEl };
 
+const TITLES = { train: 'Entrenar', calendar: 'Calendari', stats: 'Progrés', history: 'Historial' };
+
 function showScreen(name) {
   state.screen = name;
-  document.querySelectorAll('.tabs [data-screen]').forEach((b) => {
+  document.querySelectorAll('.nav [data-screen]').forEach((b) => {
     if (b.dataset.screen === name) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });
   for (const [key, el] of Object.entries(SCREENS)) el.hidden = key !== name;
+  $('#screen-title').textContent = TITLES[name];
   const train = name === 'train';
   daysEl.hidden = !train;
-  progressEl.hidden = !train;
-  document.body.classList.toggle('no-footer', !train);
   if (train) { renderDays(); renderTrain(); }
   else if (name === 'calendar') renderCalendar();
   else if (name === 'stats') renderStats();
@@ -1218,7 +1223,7 @@ function showScreen(name) {
 
 function renderAll() { showScreen(state.screen); }
 
-document.querySelector('.tabs').addEventListener('click', (e) => {
+document.querySelector('.nav').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-screen]');
   if (btn) showScreen(btn.dataset.screen);
 });

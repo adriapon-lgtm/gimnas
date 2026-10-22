@@ -7,8 +7,8 @@
   <meta name="description" content="Pla d'entrenament de gimnàs: sèries, pesos i historial.">
   <meta name="robots" content="noindex, nofollow">
   <meta name="color-scheme" content="light dark">
-  <meta name="theme-color" content="#f4f5f7" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#0f1115" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f3f4f8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0c0e13" media="(prefers-color-scheme: dark)">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png" type="image/png">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
@@ -17,12 +17,10 @@
 <body>
   <header class="top">
     <div class="wrap">
-      <nav class="tabs" aria-label="Pantalles">
-        <button type="button" data-screen="train" aria-current="page">Entrenar</button>
-        <button type="button" data-screen="calendar">Calendari</button>
-        <button type="button" data-screen="stats">Progrés</button>
-        <button type="button" data-screen="history">Historial</button>
-      </nav>
+      <div class="topbar">
+        <span class="brand">Gimnàs</span>
+        <h1 class="screen-title" id="screen-title">Entrenar</h1>
+      </div>
       <div class="days" id="days" role="group" aria-label="Dia del pla"></div>
     </div>
   </header>
@@ -34,24 +32,37 @@
     <section id="history" class="screen" aria-label="Historial" hidden></section>
   </main>
 
-  <footer class="progress" id="progress">
-    <div class="wrap">
-      <div class="timer" id="timer" hidden>
-        <div class="timer-main">
-          <span class="timer-label" id="timer-label">Descans</span>
-          <b class="timer-time tabular" id="timer-time" aria-live="off">0:00</b>
-        </div>
-        <div class="timer-btns">
-          <button type="button" class="ghost" data-timer="-15" aria-label="Treu 15 segons">−15</button>
-          <button type="button" class="ghost" data-timer="15" aria-label="Afegeix 15 segons">+15</button>
-          <button type="button" class="ghost" data-timer="stop">Salta</button>
-        </div>
-        <div class="timer-bar"><span id="timer-fill"></span></div>
-      </div>
-      <div class="progress-text" aria-live="polite"><span id="progress-label"></span><span id="progress-pct"></span></div>
-      <div class="bar"><span id="progress-fill"></span></div>
+  <div class="timer" id="timer" hidden>
+    <div class="timer-main">
+      <span class="timer-label" id="timer-label">Descans</span>
+      <b class="timer-time tabular" id="timer-time" aria-live="off">0:00</b>
     </div>
-  </footer>
+    <div class="timer-btns">
+      <button type="button" data-timer="-15" aria-label="Treu 15 segons">−15</button>
+      <button type="button" data-timer="15" aria-label="Afegeix 15 segons">+15</button>
+      <button type="button" class="skip" data-timer="stop">Salta</button>
+    </div>
+    <div class="timer-bar"><span id="timer-fill"></span></div>
+  </div>
+
+  <nav class="nav" aria-label="Pantalles">
+    <button type="button" data-screen="train" aria-current="page">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10v4M6 8v8M18 8v8M21 10v4M6 12h12"/></svg>
+      <span>Entrenar</span>
+    </button>
+    <button type="button" data-screen="calendar">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
+      <span>Calendari</span>
+    </button>
+    <button type="button" data-screen="stats">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V11M10 20V5M16 20v-7M22 20H2"/></svg>
+      <span>Progrés</span>
+    </button>
+    <button type="button" data-screen="history">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+      <span>Historial</span>
+    </button>
+  </nav>
 
   <dialog id="lightbox" aria-label="Foto de la màquina">
     <img alt="">

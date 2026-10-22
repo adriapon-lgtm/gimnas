@@ -4,7 +4,9 @@ App web instal·lable (PWA) per seguir el pla d'entrenament: calendari setmanal,
 
 ## Què fa
 
-- **Entrenar:** cada exercici té un botó per sèrie, les repeticions (o segons) de cada sèrie, el pes, + i − per canviar el nombre de sèries i «Completa» per marcar l'exercici sencer. A sota hi ha l'última vegada (pes, repeticions i data), un suggeriment de progressió (puja 2,5 kg quan arribes al màxim de repeticions a totes les sèries) i els ajustos de la màquina (seient, coixí...), que es recorden per a la pròxima vegada. En marcar una sèrie comença el descans: 2 min al primer exercici, 75 s a la resta i 45 s als de terra; vibra en acabar. Es pot canviar posant `rest: 90` (segons) a un exercici de `plan.js`. «Com fer-ho» mostra una animació de la tècnica i la nota.
+La navegació és a la barra de baix: Entrenar, Calendari, Progrés i Historial.
+
+- **Entrenar:** la capçalera mostra el dia, l'objectiu i l'anell de progrés de la sessió.  cada exercici té un botó per sèrie, les repeticions (o segons) de cada sèrie, el pes, + i − per canviar el nombre de sèries i «Completa» per marcar l'exercici sencer. A sota hi ha l'última vegada (pes, repeticions i data), un suggeriment de progressió (puja 2,5 kg quan arribes al màxim de repeticions a totes les sèries) i els ajustos de la màquina (seient, coixí...), que es recorden per a la pròxima vegada. En marcar una sèrie comença el descans: 2 min al primer exercici, 75 s a la resta i 45 s als de terra; vibra en acabar. Es pot canviar posant `rest: 90` (segons) a un exercici de `plan.js`. «Com fer-ho» mostra una animació de la tècnica i la nota.
 - **Calendari:** la setmana tipus (dl. D1, dt. D2, dj. D3, dv. D4, ds. D5 opcional). Toca un dia per entrenar-lo, aplaçar-lo un dia (els següents es mouen fins al pròxim descans), moure'l a una altra data, saltar-lo o afegir un entrenament en un dia de descans.
 - **Calendari, resum:** en tocar un dia fet, veus què vas fer a cada exercici.
 - **Progrés:** entrenaments de la setmana, setmanes completes seguides, volum (kg × repeticions), les últimes 8 setmanes i la gràfica de pes de cada exercici.
