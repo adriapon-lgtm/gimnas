@@ -1,6 +1,6 @@
 // Puja VERSION cada vegada que canviïs qualsevol fitxer de l'app,
 // perquè el mòbil descarregui la versió nova.
-const VERSION = 'v9';
+const VERSION = 'v10';
 const CACHE = `gimnas-${VERSION}`;
 
 const PHOTOS = [
@@ -14,6 +14,7 @@ const ASSETS = [
   'index.html',
   'styles.css',
   'plan.js',
+  'muscles.js',
   'anim.js',
   'app.js',
   'manifest.webmanifest',

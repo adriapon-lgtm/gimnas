@@ -327,6 +327,7 @@ function exerciseInner(ex, i, s) {
       </div>
       <span class="tick" aria-label="Completat">${ICON_CHECK}</span>
     </div>
+    ${muscleRow(ex)}
     ${how}
     <div class="sets" role="group" aria-label="Sèries">${cols}</div>
     <p class="sets-label">${unit} de cada sèrie</p>
@@ -342,6 +343,56 @@ function exerciseInner(ex, i, s) {
       </div>
       <button type="button" class="complete" data-act="complete" aria-pressed="${done}">${done ? `${ICON_CHECK} Completat` : 'Completa'}</button>
     </div>`;
+}
+
+// ---------- Músculs ----------
+
+const muscleNames = (ids) => ids.map((id) => window.MUSCLES?.names[id] || id).join(', ');
+
+// Classe de cada múscul d'un exercici: 'on' els principals, 'aux' els secundaris.
+function muscleHl(key) {
+  const m = window.PLAN.muscles?.[key];
+  const hl = {};
+  if (!m) return hl;
+  m.aux.forEach((id) => { hl[id] = 'aux'; });
+  m.main.forEach((id) => { hl[id] = 'on'; });
+  return hl;
+}
+
+function muscleRow(ex) {
+  const m = window.PLAN.muscles?.[ex.key];
+  if (!m || !window.MUSCLES) return '';
+  return `<div class="mus-row">${window.MUSCLES.svg(muscleHl(ex.key), { cls: 'mini' })}
+    <p class="mus-names"><b>${esc(muscleNames(m.main))}</b>${m.aux.length ? `<small>+ ${esc(muscleNames(m.aux))}</small>` : ''}</p></div>`;
+}
+
+// Músculs de la sessió actual, segons les sèries marcades: principals amb el nombre de sèries.
+function musclesToday() {
+  const s = getSession();
+  const hl = {}, sets = {};
+  dayById(state.day).exercises.forEach((ex, i) => {
+    const m = window.PLAN.muscles?.[ex.key];
+    if (!m) return;
+    const done = (s?.sets?.[setKey(i, ex)] || []).slice(0, countOf(s, i, ex)).filter(Boolean).length;
+    if (!done) return;
+    m.aux.forEach((id) => { if (hl[id] !== 'on') hl[id] = 'aux'; });
+    m.main.forEach((id) => { hl[id] = 'on'; sets[id] = (sets[id] || 0) + done; });
+  });
+  return { hl, sets };
+}
+
+function renderMusclesToday() {
+  const el = $('#muscles-today');
+  if (!el || !window.MUSCLES) return;
+  const { hl, sets } = musclesToday();
+  const list = Object.entries(sets).sort((a, b) => b[1] - a[1]);
+  const aux = Object.keys(hl).filter((id) => hl[id] === 'aux');
+  el.innerHTML = `<h2>Músculs treballats avui</h2>
+    ${window.MUSCLES.svg(hl, { labels: true, cls: 'big' })}
+    ${list.length
+      ? `<ul class="mus-list">${list.map(([id, n]) => `<li><span class="sw on"></span>${esc(window.MUSCLES.names[id])}<b class="tabular">${plural(n, 'sèrie', 'sèries')}</b></li>`).join('')}</ul>`
+      : '<p class="cal-log-empty">Marca sèries i aquí veuràs què has treballat.</p>'}
+    ${aux.length ? `<p class="mus-aux"><span class="sw aux"></span>Secundaris: ${esc(muscleNames(aux))}</p>` : ''}`;
 }
 
 const exerciseCard = (ex, i, s) =>
@@ -398,6 +449,7 @@ function renderTrain() {
   parts.push(checkItem('warm', 'Escalfament', window.PLAN.warmup.time, window.PLAN.warmup.items, !!s?.warm));
   parts.push(`<ol class="exercises">${day.exercises.map((ex, i) => exerciseCard(ex, i, s)).join('')}</ol>`);
   parts.push(checkItem('cardio', 'Cardio', day.cardio, null, !!s?.cardio));
+  parts.push('<section class="card muscles-today" id="muscles-today" aria-label="Músculs treballats avui"></section>');
   parts.push(`<div class="reset" id="reset">${resetIdle()}</div>`);
 
   trainEl.innerHTML = parts.join('');
@@ -414,6 +466,7 @@ function updateProgress() {
   $('#progress-fill').style.strokeDasharray = C;
   $('#progress-fill').style.strokeDashoffset = C * (1 - pct / 100);
   $('#session-head').classList.toggle('complete', done === total);
+  renderMusclesToday();
   daysEl.querySelector(`[data-day="${state.day}"]`)?.classList.toggle('has-data', !!getSession());
 }
 
