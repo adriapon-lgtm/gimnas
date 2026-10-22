@@ -289,7 +289,7 @@ function exerciseInner(ex, i, s) {
   const thumb = ex.photo
     ? `<button type="button" class="thumb" data-act="photo" aria-label="Mostra la foto: ${esc(ex.machine)}">
         <img src="img/${ex.photo}.jpg" alt="" width="72" height="72" loading="lazy" decoding="async"></button>`
-    : '<div class="thumb none" aria-hidden="true">Terra</div>';
+    : `<div class="thumb none" aria-hidden="true">${esc(ex.place || 'Terra')}</div>`;
 
   let kg = '';
   // El suggeriment es basa en el mateix dia del pla si n'hi ha (el hip thrust del D4 és més pesat que el del D2).

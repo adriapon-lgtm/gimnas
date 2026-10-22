@@ -52,6 +52,12 @@
 
   const PRESS_BACK = seat([92, 87, 44]);
 
+  // Premsa de cames: postura del tronc i seient, compartits per la premsa i els bessons a la premsa.
+  const PRESS_BASE = { hip: [95, 95], torso: -115, head: -108, armN: [70, 20], armF: [70, 20] };
+  const PRESS_PROPS = `<rect class="a-prop" x="70" y="100" width="50" height="7" rx="3"/>
+        <rect class="a-prop" x="92" y="107" width="6" height="30"/>
+        <line class="a-prop-line" x1="88" y1="99" x2="66" y2="52"/>`;
+
   function twoLines(x, y, a, b) {
     return `<text class="a-label" x="${x}" y="${y}" text-anchor="end">${a}</text>
       <text class="a-label" x="${x}" y="${y + 12}" text-anchor="end">${b}</text>`;
@@ -292,6 +298,33 @@
       ],
     },
 
+    // Bessons a la premsa: cames estirades, les puntes a la vora de la plataforma i el taló es mou.
+    calfpress: {
+      view: [10, 20, 210, 120], floor: 137,
+      props: PRESS_PROPS,
+      // La plataforma va amb les puntes dels peus: en empènyer, s'allunya.
+      marks: [{ at: 'toeN', type: 'bar', angle: 75, len: 36 }],
+      steps: [
+        { pose: { ...PRESS_BASE, legNt: [166, 76], legFt: [166, 76], footN: -110, footF: -110 }, move: 0.8, hold: 0.5, say: 'Cames estirades, només les puntes dels peus a la vora de la plataforma.' },
+        { pose: { ...PRESS_BASE, legNt: [166, 76], legFt: [166, 76], footN: -60, footF: -60 }, move: 1.0, hold: 0.6, say: 'Empeny amb les puntes: la plataforma s’allunya.' },
+        { pose: { ...PRESS_BASE, legNt: [166, 76], legFt: [166, 76], footN: -110, footF: -110 }, move: 1.6, hold: 0.4, say: 'Baixa els talons fins a notar l’estirament.' },
+      ],
+    },
+
+    // Pallof press, vista de cara: la politja és al costat i estira cap a ell; el tronc no gira.
+    pallof: {
+      view: [20, -14, 200, 164], floor: 146, front: true, sym: true, feet: false,
+      cable: { from: [218, 34], to: 'handN' },
+      guide: `<line class="a-guide" x1="120" y1="-8" x2="120" y2="68"/>
+        <text class="a-label" x="100" y="0" text-anchor="end">Sense girar</text>`,
+      marks: [{ at: 'handN', r: 4.5 }],
+      steps: [
+        { pose: { hip: [120, 72], torso: -90, head: -90, legN: [84, 90], armN: [60, 185], armNs: [0.8, 1] }, move: 0.8, hold: 0.6, say: 'De costat a la politja, peus a l’amplada de les espatlles, mans al pit.' },
+        { pose: { hip: [120, 72], torso: -90, head: -90, legN: [84, 90], armN: [120, 120], armNs: [0.55, 0.5] }, move: 1.2, hold: 1.6, say: 'Estira els braços endavant sense que el tronc giri. Aguanta 2 s.' },
+        { pose: { hip: [120, 72], torso: -90, head: -90, legN: [84, 90], armN: [60, 185], armNs: [0.8, 1] }, move: 1.2, hold: 0.4, say: "Torna les mans al pit. Després, l'altre costat." },
+      ],
+    },
+
     prone: {
       view: [20, 40, 200, 80], floor: 118,
       props: `<rect class="a-prop" x="76" y="92" width="102" height="8" rx="3"/>
@@ -369,12 +402,10 @@
   }
 
   function pressDef(says) {
-    const base = { hip: [95, 95], torso: -115, head: -108, armN: [70, 20], armF: [70, 20] };
+    const base = PRESS_BASE;
     return {
       view: [10, 20, 210, 120], floor: 137,
-      props: `<rect class="a-prop" x="70" y="100" width="50" height="7" rx="3"/>
-        <rect class="a-prop" x="92" y="107" width="6" height="30"/>
-        <line class="a-prop-line" x1="88" y1="99" x2="66" y2="52"/>`,
+      props: PRESS_PROPS,
       guide: `<line class="a-guide solid" x1="81" y1="96" x2="74" y2="80"/>
         ${twoLines(68, 96, 'Lumbar', 'enganxada')}`,
       marks: [{ at: 'ankleN', type: 'bar', angle: 75, len: 36, off: [5, -1] }],
@@ -512,8 +543,8 @@
     };
     sk.joints = {
       hip, sh, head,
-      elbowN: sk.armN[1], handN: sk.armN[2], kneeN: sk.legN[1], ankleN: sk.legN[2],
-      elbowF: sk.armF[1], handF: sk.armF[2], kneeF: sk.legF[1], ankleF: sk.legF[2],
+      elbowN: sk.armN[1], handN: sk.armN[2], kneeN: sk.legN[1], ankleN: sk.legN[2], toeN: sk.legN[3] || sk.legN[2],
+      elbowF: sk.armF[1], handF: sk.armF[2], kneeF: sk.legF[1], ankleF: sk.legF[2], toeF: sk.legF[3] || sk.legF[2],
     };
     return sk;
   }
