@@ -232,6 +232,16 @@ h1, h2, h3 { letter-spacing: -0.01em; }
 @media (max-width: 380px) { .session-head h1 { font-size: 23px; } }
 
 .focus { margin: 4px 0 0; opacity: 0.9; font-size: 15px; }
+.focus .dur {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 9px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-ink) 18%, transparent);
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
 
 .ring {
   grid-row: 1 / span 3;
@@ -367,6 +377,11 @@ h1, h2, h3 { letter-spacing: -0.01em; }
   font-size: 14px;
 }
 .done .target { background: var(--surface); color: var(--done); }
+
+.pair-tag { margin: 6px 0 0; font-size: 13px; color: var(--muted); line-height: 1.35; }
+.pair-tag b { color: var(--text); font-weight: 700; }
+.pair-tag span { color: var(--accent); font-weight: 800; margin-right: 2px; }
+.ex.skipped .pair-tag, .ex.done .pair-tag { display: none; }
 
 .tick {
   flex: none;

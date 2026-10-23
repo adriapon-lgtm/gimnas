@@ -43,8 +43,28 @@ const repRange = (ex) => { const m = String(ex.reps).match(/^(\d+)(?:\s*[–-]\s
 const parseKg = (v) => Number.parseFloat(String(v ?? '').replace(',', '.'));
 const fmtKg = (n) => String(Math.round(n * 100) / 100).replace('.', ',');
 const daysBetween = (a, b) => Math.round((parseISO(b) - parseISO(a)) / 86400000);
-// Descans entre sèries: 2 min al primer exercici del dia, 75 s a la resta i 45 s als de terra.
+// Descans entre sèries: el `rest` de l'exercici o, si no en té, 2 min al primer exercici del dia,
+// 75 s a la resta i 45 s als de terra.
 const restOf = (ex, i) => ex.rest ?? (i === 0 ? 120 : ex.weight ? 75 : 45);
+// Parella de supersèrie: l'exercici del costat amb la mateixa lletra `pair`.
+const pairOf = (day, i) => {
+  const ex = day.exercises[i];
+  if (!ex?.pair) return null;
+  const other = [day.exercises[i + 1], day.exercises[i - 1]].find((o) => o?.pair === ex.pair);
+  return other || null;
+};
+// Durada estimada d'un dia: escalfament + (sèries × (feina + descans) + canvi de màquina) + cardio.
+function dayMinutes(day) {
+  const minutes = (text) => Number.parseInt(text) || 0;
+  let secs = 0;
+  day.exercises.forEach((ex, i) => {
+    const perSide = /per (costat|cama)/.test(ex.reps);
+    const work = (ex.weight ? 40 : 45) * (perSide ? 1.5 : 1);
+    secs += ex.sets * (work + restOf(ex, i));
+    secs += pairOf(day, i) === day.exercises[i - 1] && ex.pair ? 15 : 60;
+  });
+  return minutes(window.PLAN.warmup.time) + Math.round(secs / 60) + minutes(day.cardio);
+}
 
 // ---------- Dades ----------
 
@@ -287,6 +307,7 @@ function exerciseInner(ex, i, s) {
   const last = lastFor(ex.key);
   const target = targetReps(ex);
   const unit = isTimed(ex) ? 'Segons' : 'Repeticions';
+  const pair = pairOf(dayById(state.day), i);
 
   const cols = Array.from({ length: n }, (_, j) => `
     <div class="set-col">
@@ -305,6 +326,7 @@ function exerciseInner(ex, i, s) {
         <h2><span class="num">${i + 1}.</span>${esc(ex.name)}</h2>
         <p class="machine">${esc(ex.machine)}</p>
         <p class="target tabular">${ex.sets} × ${esc(ex.reps)}</p>
+        ${pair ? `<p class="pair-tag"><span aria-hidden="true">⇄</span> Supersèrie amb <b>${esc(pair.name)}</b> · ${restOf(ex, i)} s de descans</p>` : ''}
       </div>
       <span class="tick" aria-label="Completat">${ICON_CHECK}</span>
     </div>`;
@@ -471,7 +493,7 @@ function renderTrain() {
   parts.push(`<header class="session-head" id="session-head">
     <p class="eyebrow">${day.id.toUpperCase()} · ${fmtLong(state.date)}</p>
     <h1>${esc(day.title)}</h1>
-    <p class="focus">${esc(day.focus)}</p>
+    <p class="focus">${esc(day.focus)} <span class="dur tabular">≈ ${dayMinutes(day)} min</span></p>
     <div class="ring" role="img" aria-label="Progrés de la sessió">
       <svg viewBox="0 0 72 72"><circle class="track" cx="36" cy="36" r="30"/><circle class="fill" id="progress-fill" cx="36" cy="36" r="30"/></svg>
       <b id="progress-pct"></b>
@@ -526,7 +548,8 @@ async function keepAwake(on) {
   } catch { timer.lock = null; }
 }
 
-function startRest(seconds) {
+function startRest(seconds, label = 'Descans') {
+  timer.label = label;
   timer.total = seconds * 1000;
   timer.end = Date.now() + timer.total;
   timer.doneUntil = 0;
@@ -555,7 +578,7 @@ function tickRest() {
   timerEl.hidden = false;
   document.body.classList.add('with-timer');
   timerEl.classList.remove('finished');
-  $('#timer-label').textContent = 'Descans';
+  $('#timer-label').textContent = timer.label || 'Descans';
   $('#timer-time').textContent = fmtClock(left);
   $('#timer-fill').style.width = `${Math.min(100, ((timer.total - (timer.end - now)) / timer.total) * 100)}%`;
   if (left === 0) {
@@ -607,7 +630,10 @@ function toggleSet(card, btn) {
   if (arr.some(Boolean)) s.sets[k] = arr; else delete s.sets[k];
   btn.setAttribute('aria-pressed', String(arr[j]));
   if (exDone(ex, i, s) && !wasDone) buzz();
-  if (arr[j]) startRest(restOf(ex, i));
+  if (arr[j]) {
+    const pair = pairOf(dayById(state.day), i);
+    startRest(restOf(ex, i), pair ? `Ara: ${pair.name}` : 'Descans');
+  }
   save(s);
   syncCard(card);
   updateProgress();
@@ -866,7 +892,7 @@ function renderCalendar(message = '', kind = '') {
         <span class="cal-date"><small>${WEEKDAYS[d.getDay()]}</small><b class="tabular">${d.getDate()}</b></span>
         <span class="cal-main">
           ${day
-            ? `<b>${day.id.toUpperCase()} · ${esc(day.title)}</b><small>${esc(day.focus)}${moved ? ' · <em>Canviat</em>' : ''}</small>`
+            ? `<b>${day.id.toUpperCase()} · ${esc(day.title)}</b><small>${esc(day.focus)} · ≈ ${dayMinutes(day)} min${moved ? ' · <em>Canviat</em>' : ''}</small>`
             : `<b class="muted">Descans</b>${moved ? '<small><em>Canviat</em></small>' : ''}`}
           ${extra.length ? `<small>També: ${esc(extra.join(', '))}</small>` : ''}
         </span>
