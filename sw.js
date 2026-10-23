@@ -1,6 +1,6 @@
 // Puja VERSION cada vegada que canviïs qualsevol fitxer de l'app,
 // perquè el mòbil descarregui la versió nova.
-const VERSION = 'v12';
+const VERSION = 'v13';
 const CACHE = `gimnas-${VERSION}`;
 
 const PHOTOS = [

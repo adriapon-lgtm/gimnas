@@ -1187,7 +1187,21 @@ function renderHistory(message = '', kind = '') {
     <p class="status ${kind}" role="status">${esc(message)}</p>
     ${list.length
       ? `<ul class="hist">${rows}</ul>`
-      : '<p class="empty">Encara no hi ha cap sessió. Marca alguna sèrie a «Entrenar» i apareixerà aquí.</p>'}`;
+      : '<p class="empty">Encara no hi ha cap sessió. Marca alguna sèrie a «Entrenar» i apareixerà aquí.</p>'}
+    <p class="version" id="app-version"></p>`;
+  showVersion();
+}
+
+// La versió instal·lada és el nom de la memòria cau del service worker (gimnas-vN).
+async function showVersion() {
+  const el = $('#app-version');
+  if (!el) return;
+  try {
+    const keys = (await caches.keys()).filter((k) => k.startsWith('gimnas-'));
+    el.textContent = keys.length ? `Versió de l'app: ${keys.map((k) => k.replace('gimnas-', '')).join(', ')}` : 'Versió de l’app: sense memòria cau (cal connexió)';
+  } catch {
+    el.textContent = '';
+  }
 }
 
 historyEl.addEventListener('click', (e) => {

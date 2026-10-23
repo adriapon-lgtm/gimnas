@@ -1020,6 +1020,8 @@ h1, h2, h3 { letter-spacing: -0.01em; }
 }
 .hist .h-pct.full { color: var(--done); }
 
+.version { margin: 20px 0 0; text-align: center; color: var(--muted); font-size: 12px; }
+
 .empty {
   margin-top: 24px;
   padding: 24px 20px;
