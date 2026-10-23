@@ -133,8 +133,19 @@
       marks: [{ at: 'hip', r: 7, off: [7, 7] }, { at: 'ankleN', r: 5, off: [-5, -5] }],
       steps: [
         { pose: { hip: [112, 78], torso: 50, head: 50, armN: [215, 115], armF: [215, 115], armNs: [0.6, 0.6], armFs: [0.6, 0.6], legN: [135, 135], legF: [135, 135] }, move: 0.8, hold: 0.8, say: 'Malucs al coixí i braços creuats al pit.' },
-        { pose: { hip: [112, 78], torso: -45, head: -45, armN: [120, 20], armF: [120, 20], armNs: [0.6, 0.6], armFs: [0.6, 0.6], legN: [135, 135], legF: [135, 135] }, move: 1.6, hold: 0.8, say: 'Puja fins a línia recta, no més amunt.' },
+        { pose: { hip: [112, 78], torso: -45, head: -45, armN: [120, 20], armF: [120, 20], armNs: [0.6, 0.6], armFs: [0.6, 0.6], legN: [135, 135], legF: [135, 135] }, move: 1.6, hold: 4, say: "Puja fins a línia recta i aguanta 20–30 s. El moviment surt del maluc; l'esquena no s'arrodoneix." },
         { pose: { hip: [112, 78], torso: 50, head: 50, armN: [215, 115], armF: [215, 115], armNs: [0.6, 0.6], armFs: [0.6, 0.6], legN: [135, 135], legF: [135, 135] }, move: 1.8, hold: 0.4, say: 'Baixa a poc a poc.' },
+      ],
+    },
+
+    glutebridge: {
+      view: [30, 60, 200, 68], floor: 120, feet: false,
+      guide: `<line class="a-guide" x1="88" y1="104" x2="168" y2="104"/>
+        <text class="a-label" x="128" y="98" text-anchor="middle">Genolls, malucs i espatlles en línia</text>`,
+      steps: [
+        { pose: { hip: [140, 111], torso: 180, head: 180, armN: [0, 0], armF: [0, 0], legNt: [184, 116], legFt: [184, 116] }, move: 0.8, hold: 0.8, say: 'Estirat, genolls doblegats i peus a terra a prop del cul.' },
+        { pose: { hip: [140, 92], torso: 160, head: 182, armN: [0, 0], armF: [0, 0], legNt: [184, 116], legFt: [184, 116] }, move: 1.2, hold: 1.6, say: 'Apreta el gluti i puja els malucs fins a línia recta. No arquegis la lumbar.' },
+        { pose: { hip: [140, 111], torso: 180, head: 180, armN: [0, 0], armF: [0, 0], legNt: [184, 116], legFt: [184, 116] }, move: 1.0, hold: 0.5, say: 'Baixa a poc a poc.' },
       ],
     },
 

@@ -3,9 +3,24 @@
 const STORE_KEY = 'gimnas.sessions.v1';
 const SCHEDULE_KEY = 'gimnas.schedule.v1';
 const SETTINGS_KEY = 'gimnas.machine.v1'; // ajustos de cada màquina, per clau d'exercici
-const META_KEY = 'gimnas.meta.v1'; // { lastExport }
+const META_KEY = 'gimnas.meta.v1'; // { lastExport, lastDeload, deloadWeek, deloadDismissed }
+const STEPS_KEY = 'gimnas.steps.v1'; // pas de pes de cada exercici, per clau (2,5 kg si no n'hi ha)
+const SWIM_KEY = 'gimnas.swim.v1'; // natació, per data: { minutes, style, meters, updated }
 const BACKUP_DAYS = 14;
 const KG_STEP = 2.5;
+const DELOAD_WEEKS = 5; // cada quantes setmanes es proposa una descàrrega
+const SKIP_REASONS = { busy: 'Màquina ocupada', time: 'Sense temps', pain: 'Molèstia', other: 'Altre' };
+const ZONES = { lumbar: 'Lumbar', espatlla: 'Espatlla', genoll: 'Genoll', altre: 'Altre' };
+const SWIM_STYLES = { crol: 'Crol', esquena: 'Esquena', braca: 'Braça', mixt: 'Mixt' };
+const LUMBAR_MSG = 'Para si notes dolor que baixa per la cama, formigueig o dolor que dura més de 24 h. Comenta-ho amb el fisio.';
+const SWIM_NOTE = 'Amb la lumbar, millor crol i esquena. La papallona i la braça amb el cap fora de l’aigua arquegen l’esquena. Si fas servir la taula de batre i notes la lumbar, deixa-la.';
+// Sessió de compensació: exercicis del D5 per ordre de prioritat, bloc de core i exercicis
+// pesats de cames que no es repeteixen si ahir vas fer cames.
+const COMP_ORDER = ['facepull', 'lowrowwide', 'reardelt', 'straightarm', 'incline', 'armcurl', 'armext', 'calf'];
+const CORE_BLOCK = [{ key: 'sideplank', sets: 2 }, { key: 'deadbug', sets: 2 }];
+const HEAVY_LEGS = ['legpress', 'legpresshigh', 'hipthrust', 'hyperiso', 'hyper'];
+const SESSION_MAX = 80; // minuts
+const CARDIO_MIN = 20, CARDIO_MAX = 30;
 const MONTHS = ['gen.', 'febr.', 'març', 'abr.', 'maig', 'juny', 'jul.', 'ag.', 'set.', 'oct.', 'nov.', 'des.'];
 const WEEKDAYS = ['dg.', 'dl.', 'dt.', 'dc.', 'dj.', 'dv.', 'ds.'];
 // Setmana tipus (0 = diumenge): dilluns D1, dimarts D2, dijous D3, divendres D4, dissabte D5 (opcional).
@@ -15,6 +30,12 @@ const MAX_SETS = 10;
 
 const DAYS = window.PLAN.days;
 const dayById = (id) => DAYS.find((d) => d.id === id);
+const MAIN_DAYS = DAYS.map((d) => d.id).filter((id) => id !== 'd5');
+
+// Catàleg d'exercicis per clau (la primera definició del pla) i definició d'un dia concret.
+const EX_BY_KEY = {};
+for (const d of DAYS) for (const ex of d.exercises) EX_BY_KEY[ex.key] ||= ex;
+const exDef = (key, from) => dayById(from)?.exercises.find((ex) => ex.key === key) || EX_BY_KEY[key];
 
 const ICON_CHECK = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
 
@@ -54,8 +75,9 @@ const pairOf = (day, i) => {
   return other || null;
 };
 // Durada estimada d'un dia: escalfament + (sèries × (feina + descans) + canvi de màquina) + cardio.
-function dayMinutes(day) {
-  const minutes = (text) => Number.parseInt(text) || 0;
+const minutesOf = (text) => Number.parseInt(text) || 0;
+const WARMUP_MIN = minutesOf(window.PLAN.warmup.time);
+function strengthMinutes(day) {
   let secs = 0;
   day.exercises.forEach((ex, i) => {
     const perSide = /per (costat|cama)/.test(ex.reps);
@@ -63,8 +85,9 @@ function dayMinutes(day) {
     secs += ex.sets * (work + restOf(ex, i));
     secs += pairOf(day, i) === day.exercises[i - 1] && ex.pair ? 15 : 60;
   });
-  return minutes(window.PLAN.warmup.time) + Math.round(secs / 60) + minutes(day.cardio);
+  return Math.round(secs / 60);
 }
+const dayMinutes = (day) => WARMUP_MIN + strengthMinutes(day) + minutesOf(day.cardio);
 
 // ---------- Dades ----------
 
@@ -89,11 +112,14 @@ let sessions = loadJSON(STORE_KEY);
 const persist = () => saveJSON(STORE_KEY, sessions);
 const machine = loadJSON(SETTINGS_KEY);
 const meta = loadJSON(META_KEY);
+const steps = loadJSON(STEPS_KEY);
+const swim = loadJSON(SWIM_KEY);
 
 const hasText = (v) => v !== null && v !== undefined && String(v).trim() !== '';
 
+// Una sessió de compensació generada es conserva encara que no s'hi hagi marcat res.
 function isEmpty(s) {
-  return !s.warm && !s.cardio
+  return !s.warm && !s.cardio && !s.plan
     && !Object.values(s.sets || {}).some((a) => a.some(Boolean))
     && !Object.values(s.kg || {}).some(hasText)
     && !Object.values(s.reps || {}).some((a) => a.some(hasText))
@@ -102,7 +128,13 @@ function isEmpty(s) {
     && !s.finished;
 }
 
-const state = { screen: 'train', date: todayISO(), day: 'd1', editing: false, restNote: '', week: mondayOf(todayISO()), calOpen: '', progEx: '' };
+const state = {
+  screen: 'train', date: todayISO(), day: 'd1', editing: false, restNote: '', week: mondayOf(todayISO()), calOpen: '', progEx: '',
+  skipping: '', // clau de la targeta on s'està triant el motiu per saltar
+  skipZone: false, // s'ha triat «molèstia» i falta la zona
+  swimDate: '', // data del formulari de natació obert
+  comp: null, // proposta de sessió de compensació en edició (encara no desada)
+};
 
 const currentKey = () => keyOf(state.date, state.day);
 const getSession = () => sessions[currentKey()] || null;
@@ -124,7 +156,10 @@ function save(s) {
   persist();
 }
 
-const countOf = (s, i, ex) => s?.count?.[setKey(i, ex)] ?? ex.sets;
+// Setmana de descàrrega: la meitat de sèries (arrodonint amunt) amb el mateix pes.
+const isDeloadDate = (date) => !!meta.deloadWeek && mondayOf(date) === meta.deloadWeek;
+const defaultSets = (ex, s) => (isDeloadDate(s?.date || state.date) && !s?.plan ? Math.max(1, Math.ceil(ex.sets / 2)) : ex.sets);
+const countOf = (s, i, ex) => s?.count?.[setKey(i, ex)] ?? defaultSets(ex, s);
 
 function exDone(ex, i, s) {
   const n = countOf(s, i, ex);
@@ -133,6 +168,48 @@ function exDone(ex, i, s) {
 }
 
 const exSkipped = (ex, i, s) => !!s?.skip?.[setKey(i, ex)];
+// Motiu del salt, normalitzat: els «true» antics passen a 'other'.
+function skipInfo(v) {
+  if (!v) return null;
+  if (typeof v !== 'object') return { reason: 'other' };
+  const reason = SKIP_REASONS[v.reason] ? v.reason : 'other';
+  const out = { reason };
+  if (reason === 'pain') { out.zone = ZONES[v.zone] ? v.zone : 'altre'; if (hasText(v.note)) out.note = String(v.note).trim(); }
+  return out;
+}
+const skipText = (info) => (info.reason === 'pain' ? `Molèstia: ${ZONES[info.zone].toLowerCase()}` : SKIP_REASONS[info.reason]);
+
+// Sèries marcades i planificades d'una sessió (les saltades compten com a planificades i no fetes).
+function setsOfSession(s) {
+  const day = dayOf(s);
+  let done = 0, planned = 0;
+  day.exercises.forEach((ex, i) => {
+    const n = countOf(s, i, ex);
+    planned += n;
+    if (!exSkipped(ex, i, s)) done += (s.sets?.[setKey(i, ex)] || []).slice(0, n).filter(Boolean).length;
+  });
+  return { done, planned };
+}
+
+// Dia d'una sessió: el del pla o, si és de compensació, el que es va generar (s.plan).
+function dayOf(s) {
+  if (!s) return null;
+  if (!s.plan) return dayById(s.day) || null;
+  const exercises = s.plan.map((p) => {
+    const def = exDef(p.key, p.from);
+    if (!def) return null;
+    const ex = { ...def, sets: p.sets, from: p.from };
+    delete ex.pair;
+    return ex;
+  }).filter(Boolean);
+  // El bloc de core va en supersèrie.
+  exercises.forEach((ex, i) => {
+    const next = exercises[i + 1];
+    if (ex.key === 'sideplank' && next?.key === 'deadbug') { ex.pair = next.pair = 'Z'; ex.rest = 15; next.rest = 45; }
+  });
+  return { id: 'd5', kind: 'upper', short: 'Compensació', title: 'Sessió de compensació', focus: 'Del que ha faltat aquesta setmana', cardio: `${s.cardioMin || CARDIO_MIN} min en zona 2 (bicicleta, el·líptica o escaladora)`, exercises, comp: true };
+}
+const currentDay = () => dayOf(getSession()) || dayById(state.day);
 
 // Els exercicis saltats no compten al total: es pot completar el dia sense fer-los.
 function progressOf(day, s) {
@@ -146,25 +223,41 @@ function progressOf(day, s) {
   return { done, total, skipped, pct: Math.round((done / total) * 100), finished: !!s?.finished };
 }
 
-// Última sessió anterior amb pes o repeticions per a aquesta clau d'exercici,
-// sigui quin sigui el dia del pla.
-function lastFor(exKey, sameDay = false) {
+// Sessions anteriors amb pes o repeticions per a aquesta clau d'exercici (la més recent
+// primer), sigui quin sigui el dia del pla o només del mateix dia.
+function historyFor(exKey, sameDay = false, n = 1) {
   const cur = currentKey();
-  let best = null;
+  const out = [];
   for (const [k, s] of Object.entries(sessions)) {
     if (k === cur || !s || s.date > state.date || (sameDay && s.day !== state.day)) continue;
     const kg = String(s.kg?.[exKey] ?? '').trim();
     const repsKey = Object.keys(s.reps || {}).find((rk) => rk.endsWith(`:${exKey}`) && s.reps[rk].some(hasText));
     const reps = repsKey ? s.reps[repsKey].map((v) => String(v ?? '').trim()) : [];
     if (!kg && !reps.length) continue;
-    if (!best || byRecent(s, best) < 0) best = { date: s.date, updated: s.updated, kg, reps };
+    out.push({ date: s.date, updated: s.updated, kg, reps });
   }
-  return best;
+  return out.sort(byRecent).slice(0, n);
+}
+const lastFor = (exKey, sameDay = false) => historyFor(exKey, sameDay)[0] || null;
+
+// Pas de pes de l'exercici (cada màquina té el seu); 2,5 kg si no s'ha canviat.
+function stepOf(ex) {
+  const v = parseKg(steps[ex.key]);
+  return Number.isFinite(v) && v > 0 ? v : KG_STEP;
+}
+
+// Totes les sèries d'una sessió al màxim del rang.
+function hitTop(ex, h) {
+  const range = repRange(ex);
+  const reps = (h?.reps || []).filter(hasText).map(Number).filter((n) => n > 0);
+  return !!range && reps.length >= ex.sets && reps.every((r) => r >= range[1]);
 }
 
 // Doble progressió: si a l'última sessió vas arribar al màxim de repeticions a totes les
-// sèries, toca pujar; si alguna va quedar per sota del mínim, mantenir.
-function suggestion(ex, last) {
+// sèries, toca pujar; si alguna va quedar per sota del mínim, mantenir. Als aïllaments
+// petits (`slow`) cal arribar-hi dues sessions seguides amb el mateix pes.
+function suggestion(ex, hist) {
+  const last = hist?.[0];
   const range = repRange(ex);
   const kg = parseKg(last?.kg);
   if (!ex.weight || !range || isTimed(ex) || !Number.isFinite(kg)) return null;
@@ -172,18 +265,59 @@ function suggestion(ex, last) {
   if (!reps.length) return null;
   const [lo, hi] = range;
   const assist = ex.weight === 'assist';
-  if (reps.length >= ex.sets && reps.every((r) => r >= hi)) {
-    const next = assist ? Math.max(0, kg - KG_STEP) : kg + KG_STEP;
-    return {
-      kind: 'up', kg: fmtKg(next),
-      text: `${assist ? "Baixa l'assistència" : 'Puja'}: prova ${fmtKg(next)} kg`,
-      why: `vas fer ${hi} o més a totes les sèries`,
-    };
+  const step = stepOf(ex);
+  if (hitTop(ex, last)) {
+    const prev = hist[1];
+    const twice = !ex.slow || (prev && parseKg(prev.kg) === kg && hitTop(ex, prev));
+    if (twice) {
+      const next = assist ? Math.max(0, kg - step) : kg + step;
+      return {
+        kind: 'up', kg: fmtKg(next),
+        text: `${assist ? "Baixa l'assistència" : 'Puja'}: prova ${fmtKg(next)} kg`,
+        why: ex.slow ? `has fet ${hi} o més a totes les sèries dues sessions seguides` : `vas fer ${hi} o més a totes les sèries`,
+      };
+    }
+    return { kind: 'keep', kg: fmtKg(kg), text: `Mantén ${fmtKg(kg)} kg`, why: `vas arribar a ${hi}; repeteix-ho una vegada més i puja` };
   }
   if (reps.some((r) => r < lo)) {
     return { kind: 'keep', kg: fmtKg(kg), text: `Mantén ${fmtKg(kg)} kg`, why: `alguna sèrie va quedar per sota de ${lo}; si et costa, baixa` };
   }
   return { kind: 'keep', kg: fmtKg(kg), text: `Mantén ${fmtKg(kg)} kg`, why: `intenta arribar a ${hi} a totes les sèries` };
+}
+
+// Avís de regressió al primer exercici del dia: pes o repeticions més baixos dues sessions seguides.
+function regression(ex) {
+  const h = historyFor(ex.key, true, 3);
+  if (h.length < 3 || !ex.weight) return false;
+  const score = (x) => ({ kg: parseKg(x.kg), reps: x.reps.filter(hasText).map(Number).reduce((a, b) => a + (b || 0), 0) });
+  const worse = (a, b) => (ex.weight === 'assist' ? a.kg > b.kg : a.kg < b.kg) || (a.kg === b.kg && a.reps < b.reps);
+  const [a, b, c] = h.map(score);
+  return [a, b, c].every((x) => Number.isFinite(x.kg)) && worse(a, b) && worse(b, c);
+}
+
+// ---------- Descàrrega ----------
+
+// 'on': aquesta setmana és de descàrrega. 'due': toca proposar-la. 'off': res.
+function deloadStatus(date = todayISO()) {
+  const monday = mondayOf(date);
+  if (meta.deloadWeek === monday) return 'on';
+  if (meta.deloadDismissed === monday) return 'off';
+  const dates = Object.values(sessions).filter((s) => !s.plan || setsOfSession(s).done).map((s) => s.date).sort();
+  if (!dates.length) return 'off';
+  const ref = meta.lastDeload || mondayOf(dates[0]);
+  return daysBetween(ref, monday) >= DELOAD_WEEKS * 7 ? 'due' : 'off';
+}
+
+function deloadBanner() {
+  const st = deloadStatus();
+  if (st === 'on') {
+    return `<div class="banner deload"><span><b>Setmana de descàrrega.</b> La meitat de sèries amb el mateix pes.</span>
+      <button type="button" class="link" data-act="deload-undo">Desfés</button></div>`;
+  }
+  if (st !== 'due') return '';
+  const ref = meta.lastDeload ? `Fa ${Math.floor(daysBetween(meta.lastDeload, todayISO()) / 7)} setmanes de l'última descàrrega.` : `Portes ${DELOAD_WEEKS} setmanes o més entrenant sense descàrrega.`;
+  return `<div class="banner deload"><span><b>${ref}</b> Vols que aquesta setmana sigui de descàrrega? La meitat de sèries amb el mateix pes.</span>
+    <span class="row"><button type="button" class="btn small" data-act="deload-yes">Sí</button><button type="button" class="ghost small" data-act="deload-no">Ara no</button></span></div>`;
 }
 
 // ---------- Calendari ----------
@@ -307,7 +441,9 @@ function exerciseInner(ex, i, s) {
   const last = lastFor(ex.key);
   const target = targetReps(ex);
   const unit = isTimed(ex) ? 'Segons' : 'Repeticions';
-  const pair = pairOf(dayById(state.day), i);
+  const day = dayOf(s) || dayById(state.day);
+  const pair = pairOf(day, i);
+  const fromTag = ex.from ? `<span class="from-tag">${ex.from === 'core' ? 'Core' : ex.from === 'd5' ? 'D5' : `Pendent del ${ex.from.toUpperCase()}`}</span>` : '';
 
   const cols = Array.from({ length: n }, (_, j) => `
     <div class="set-col">
@@ -325,20 +461,35 @@ function exerciseInner(ex, i, s) {
       <div class="ex-info">
         <h2><span class="num">${i + 1}.</span>${esc(ex.name)}</h2>
         <p class="machine">${esc(ex.machine)}</p>
-        <p class="target tabular">${ex.sets} × ${esc(ex.reps)}</p>
+        <p class="target tabular">${ex.sets} × ${esc(ex.reps)}${fromTag}</p>
         ${pair ? `<p class="pair-tag"><span aria-hidden="true">⇄</span> Supersèrie amb <b>${esc(pair.name)}</b> · ${restOf(ex, i)} s de descans</p>` : ''}
       </div>
       <span class="tick" aria-label="Completat">${ICON_CHECK}</span>
     </div>`;
 
   if (exSkipped(ex, i, s)) {
-    return `${top}<div class="skipped-row"><span>Saltat avui</span>
-      <button type="button" class="ghost" data-act="unskip">Desfés</button></div>`;
+    const info = skipInfo(s.skip[k]);
+    const pain = info.reason === 'pain';
+    return `${top}<div class="skipped-row"><span>Saltat · ${esc(skipText(info))}</span>
+      <button type="button" class="ghost" data-act="unskip">Desfés</button></div>
+      ${pain ? `<div class="skip-note"><input data-skipnote="${esc(k)}" type="text" autocomplete="off" enterkeyhint="done" value="${esc(info.note || '')}" placeholder="Nota (opcional): què has notat"></div>` : ''}
+      ${pain && info.zone === 'lumbar' ? `<p class="warn-text">${esc(LUMBAR_MSG)}</p>` : ''}`;
+  }
+
+  if (state.skipping === k) {
+    const opts = state.skipZone
+      ? Object.entries(ZONES).map(([z, t]) => `<button type="button" class="chip-btn" data-act="skip-zone" data-zone="${z}">${t}</button>`).join('')
+      : Object.entries(SKIP_REASONS).map(([r, t]) => `<button type="button" class="chip-btn" data-act="skip-reason" data-reason="${r}">${t}</button>`).join('');
+    return `${top}<div class="skip-panel"><p>${state.skipZone ? 'On ho notes?' : 'Per què el saltes?'}</p>
+      <div class="skip-opts">${opts}</div>
+      <button type="button" class="ghost" data-act="skip-cancel">Cancel·la</button></div>`;
   }
 
   let kg = '';
   // El suggeriment es basa en el mateix dia del pla si n'hi ha (el hip thrust del D4 és més pesat que el del D2).
-  const tip = suggestion(ex, lastFor(ex.key, true) || last);
+  const hist = historyFor(ex.key, true, 2);
+  const tip = suggestion(ex, hist.length ? hist : historyFor(ex.key, false, 2));
+  const regress = i === 0 && !day.comp && regression(ex);
   if (ex.weight) {
     const assist = ex.weight === 'assist';
     kg = `<div class="kg">
@@ -348,14 +499,19 @@ function exerciseInner(ex, i, s) {
       ${assist ? '<p class="hint">Com menys pes d’assistència, més difícil.</p>' : ''}
     </div>`;
   }
-  const tipHtml = tip
+  const deload = isDeloadDate(s?.date || state.date) && !day.comp;
+  const tipHtml = (tip && !deload
     ? `<p class="tip ${tip.kind}">${tip.kind === 'up' ? '<span aria-hidden="true">↑</span> ' : ''}<b>${esc(tip.text)}</b> · ${esc(tip.why)}</p>`
-    : '';
-  const settings = ex.photo
+    : '') + (regress ? '<p class="tip down"><b>Has baixat dues sessions seguides.</b> Dorm i menja bé; si continua, fes una setmana de descàrrega.</p>' : '');
+  const settings = (ex.photo
     ? `<div class="machine-set"><label for="ms-${i}">Ajustos</label>
         <input id="ms-${i}" data-setting="${esc(ex.key)}" type="text" autocomplete="off" enterkeyhint="done"
           value="${esc(machine[ex.key] ?? '')}" placeholder="Seient, coixí, forat…"></div>`
-    : '';
+    : '') + (ex.weight === true
+    ? `<div class="machine-set"><label for="st-${i}">Pas de pes</label>
+        <span class="kg-input"><input id="st-${i}" data-step="${esc(ex.key)}" type="text" inputmode="decimal" autocomplete="off" enterkeyhint="done"
+          value="${esc(steps[ex.key] ?? '')}" placeholder="${fmtKg(KG_STEP)}"><span>kg</span></span></div>`
+    : '');
 
   const animId = ex.anim || ex.key;
   const anim = window.ANIM?.has(animId) ? `<figure class="anim" data-anim="${esc(animId)}"></figure>` : '';
@@ -411,7 +567,7 @@ function muscleRow(ex) {
 function musclesToday() {
   const s = getSession();
   const hl = {}, sets = {};
-  dayById(state.day).exercises.forEach((ex, i) => {
+  currentDay().exercises.forEach((ex, i) => {
     const m = window.PLAN.muscles?.[ex.key];
     if (!m || exSkipped(ex, i, s)) return;
     const done = (s?.sets?.[setKey(i, ex)] || []).slice(0, countOf(s, i, ex)).filter(Boolean).length;
@@ -442,7 +598,7 @@ const exerciseCard = (ex, i, s) =>
 // Torna a pintar una targeta i manté «Com fer-ho» obert si ho estava.
 function refreshCard(card) {
   const i = Number(card.dataset.i);
-  const ex = dayById(state.day).exercises[i];
+  const ex = currentDay().exercises[i];
   const s = getSession();
   const wasOpen = card.querySelector('details.how')?.open;
   card.innerHTML = exerciseInner(ex, i, s);
@@ -454,7 +610,7 @@ function refreshCard(card) {
 
 // Bloc del final: acabar la sessió encara que no estigui tot fet, o reobrir-la.
 function finishBlock(s) {
-  const { done, total, skipped, pct } = progressOf(dayById(state.day), s);
+  const { done, total, skipped, pct } = progressOf(currentDay(), s);
   const skippedText = skipped ? ` · ${plural(skipped, 'saltat', 'saltats')}` : '';
   if (s?.finished) {
     return `<p class="finish-done">${ICON_CHECK} Sessió acabada · ${done} de ${total}${skippedText}</p>
@@ -466,7 +622,7 @@ function finishBlock(s) {
 
 function syncCard(card) {
   const i = Number(card.dataset.i);
-  const ex = dayById(state.day).exercises[i];
+  const ex = currentDay().exercises[i];
   const done = exDone(ex, i, getSession());
   card.classList.toggle('done', done);
   const btn = card.querySelector('.complete');
@@ -478,9 +634,32 @@ function resetIdle() {
   return '<button type="button" class="ghost danger-text" data-act="reset">Reinicia la sessió</button>';
 }
 
+// Escalfament del dia: la llista comuna més el pas extra segons si és de tronc o de cames.
+function warmupItems(day) {
+  const w = window.PLAN.warmup;
+  const extra = w.extra?.[day.kind];
+  if (!extra) return w.items;
+  const items = w.items.slice();
+  items.splice(Math.max(0, items.length - 1), 0, extra);
+  return items;
+}
+
+function sessionHead(day, { chip = '' } = {}) {
+  return `<header class="session-head" id="session-head">
+    <p class="eyebrow">${day.id.toUpperCase()} · ${fmtLong(state.date)}</p>
+    <h1>${esc(day.title)}</h1>
+    <p class="focus">${esc(day.focus)} <span class="dur tabular">≈ ${dayMinutes(day)} min</span>${chip}</p>
+    <div class="ring" role="img" aria-label="Progrés de la sessió">
+      <svg viewBox="0 0 72 72"><circle class="track" cx="36" cy="36" r="30"/><circle class="fill" id="progress-fill" cx="36" cy="36" r="30"/></svg>
+      <b id="progress-pct"></b>
+    </div>
+    <p class="progress-text" aria-live="polite"><span id="progress-label"></span></p>
+  </header>`;
+}
+
 function renderTrain() {
-  const day = dayById(state.day);
   const s = getSession();
+  const day = dayOf(s) || dayById(state.day);
   const parts = [];
 
   if (state.editing) {
@@ -489,19 +668,19 @@ function renderTrain() {
   } else if (state.restNote && !s) {
     parts.push(`<div class="banner"><span>${esc(state.restNote)}</span></div>`);
   }
+  if (!state.editing) parts.push(deloadBanner());
 
-  parts.push(`<header class="session-head" id="session-head">
-    <p class="eyebrow">${day.id.toUpperCase()} · ${fmtLong(state.date)}</p>
-    <h1>${esc(day.title)}</h1>
-    <p class="focus">${esc(day.focus)} <span class="dur tabular">≈ ${dayMinutes(day)} min</span></p>
-    <div class="ring" role="img" aria-label="Progrés de la sessió">
-      <svg viewBox="0 0 72 72"><circle class="track" cx="36" cy="36" r="30"/><circle class="fill" id="progress-fill" cx="36" cy="36" r="30"/></svg>
-      <b id="progress-pct"></b>
-    </div>
-    <p class="progress-text" aria-live="polite"><span id="progress-label"></span></p>
-  </header>`);
+  // El dia 5 no és una sessió fixa: natació o sessió de compensació.
+  if (state.day === OPTIONAL && !s) {
+    trainEl.innerHTML = parts.join('') + renderDayFive();
+    return;
+  }
 
-  parts.push(checkItem('warm', 'Escalfament', window.PLAN.warmup.time, window.PLAN.warmup.items, !!s?.warm));
+  if (s?.banner) parts.push(`<div class="banner"><span>${esc(s.banner)}</span></div>`);
+  const deload = isDeloadDate(state.date) && !day.comp;
+  parts.push(sessionHead(day, { chip: deload ? '<span class="dur">Descàrrega</span>' : '' }));
+
+  parts.push(checkItem('warm', 'Escalfament', window.PLAN.warmup.time, warmupItems(day), !!s?.warm));
   parts.push(`<ol class="exercises">${day.exercises.map((ex, i) => exerciseCard(ex, i, s)).join('')}</ol>`);
   parts.push(checkItem('cardio', 'Cardio', day.cardio, null, !!s?.cardio));
   parts.push('<section class="card muscles-today" id="muscles-today" aria-label="Músculs treballats avui"></section>');
@@ -514,7 +693,8 @@ function renderTrain() {
 
 function updateProgress() {
   const s = getSession();
-  const { done, total, pct, skipped, finished } = progressOf(dayById(state.day), s);
+  if (!$('#progress-label')) return;
+  const { done, total, pct, skipped, finished } = progressOf(currentDay(), s);
   const skippedText = skipped ? ` · ${plural(skipped, 'saltat', 'saltats')}` : '';
   $('#progress-label').innerHTML = finished
     ? `<b>Sessió acabada</b> · ${done} de ${total}${skippedText}`
@@ -533,6 +713,224 @@ function updateProgress() {
 }
 
 const buzz = (pattern = 60) => { try { navigator.vibrate?.(pattern); } catch { /* sense vibració */ } };
+
+// ---------- Natació ----------
+
+const swimText = (w) => [`${w.minutes} min`, SWIM_STYLES[w.style] || '', w.meters ? `${fmtInt(w.meters)} m` : ''].filter(Boolean).join(' · ');
+const swimInWeek = (monday) => weekDays(monday).filter((d) => swim[d]);
+
+function swimForm(date) {
+  const w = swim[date];
+  return `<div class="card swim-form" data-swim-date="${date}">
+    <h2>Natació · ${fmtDay(date)}</h2>
+    <label class="field"><span>Minuts</span><input data-swim="minutes" type="number" inputmode="numeric" min="1" max="300" value="${w?.minutes ?? ''}" placeholder="40"></label>
+    <label class="field"><span>Estil principal</span>
+      <select data-swim="style">${Object.entries(SWIM_STYLES).map(([k, t]) => `<option value="${k}"${(w?.style || 'crol') === k ? ' selected' : ''}>${t}</option>`).join('')}</select></label>
+    <label class="field"><span>Metres (opcional)</span><input data-swim="meters" type="number" inputmode="numeric" min="0" step="50" value="${w?.meters ?? ''}" placeholder="1500"></label>
+    <p class="hint">${esc(SWIM_NOTE)}</p>
+    <p class="status err" role="status" data-swim-msg></p>
+    <div class="row"><button type="button" class="btn" data-act="swim-save">Desa</button><button type="button" class="ghost" data-act="swim-cancel">Cancel·la</button></div>
+  </div>`;
+}
+
+// Desa el formulari de natació del contenidor; torna false si falten els minuts.
+function saveSwim(form) {
+  const date = form.dataset.swimDate;
+  const minutes = Number(form.querySelector('[data-swim="minutes"]').value);
+  if (!Number.isInteger(minutes) || minutes <= 0) {
+    form.querySelector('[data-swim-msg]').textContent = 'Posa els minuts que has nedat.';
+    return false;
+  }
+  const meters = Number(form.querySelector('[data-swim="meters"]').value);
+  swim[date] = { minutes, style: form.querySelector('[data-swim="style"]').value, updated: new Date().toISOString() };
+  if (meters > 0) swim[date].meters = meters;
+  saveJSON(SWIM_KEY, swim);
+  state.swimDate = '';
+  return true;
+}
+
+function swimSummary(date) {
+  const w = swim[date];
+  return `<section class="cal-session swim-done"><header><b>Natació</b><span class="tabular full">${esc(swimText(w))}</span></header>
+    <div class="row"><button type="button" class="ghost" data-act="swim-edit">Edita</button><button type="button" class="ghost danger-text" data-act="swim-delete">Esborra</button></div></section>`;
+}
+
+// ---------- Dia 5: natació o compensació ----------
+
+// Sèries fetes aquesta setmana per múscul (principals 1, secundaris 0,5) i per clau d'exercici.
+function weekSessions(monday, until = addDays(monday, 6)) {
+  return Object.values(sessions).filter((s) => s.date >= monday && s.date <= until && dayOf(s) && !isEmpty(s));
+}
+
+function musclesDone(list) {
+  const by = {};
+  for (const s of list) {
+    const day = dayOf(s);
+    day.exercises.forEach((ex, i) => {
+      const m = window.PLAN.muscles?.[ex.key];
+      if (!m || exSkipped(ex, i, s)) return;
+      const done = (s.sets?.[setKey(i, ex)] || []).slice(0, countOf(s, i, ex)).filter(Boolean).length;
+      m.main.forEach((id) => { by[id] = (by[id] || 0) + done; });
+      m.aux.forEach((id) => { by[id] = (by[id] || 0) + done / 2; });
+    });
+  }
+  return by;
+}
+
+// Estat d'un dia D1–D4 dins la setmana: fet (≥ 80 % de les sèries), parcial, no fet o pendent (encara no toca).
+function dayStatus(id, monday, date) {
+  const list = weekSessions(monday, date).filter((s) => s.day === id && !s.plan);
+  if (list.length) {
+    const t = list.reduce((a, s) => { const x = setsOfSession(s); a.done += x.done; a.planned += x.planned; return a; }, { done: 0, planned: 0 });
+    const pct = t.planned ? t.done / t.planned : 0;
+    return { st: pct >= 0.8 ? 'fet' : pct > 0 ? 'parcial' : 'nofet', pct: Math.round(pct * 100) };
+  }
+  const plannedDate = weekDays(monday).find((d) => planned(d) === id);
+  if (plannedDate && plannedDate >= date) return { st: 'pendent', pct: 0 };
+  return { st: 'nofet', pct: 0 };
+}
+
+const lowerDayRecent = (date, except) => Object.values(sessions).some((s) => s !== except && (s.date === date || s.date === addDays(date, -1)) && dayById(s.day)?.kind === 'lower' && !isEmpty(s) && setsOfSession(s).done > 0);
+
+// Proposta per al dia 5: o bé un dia sencer que falta, o bé una sessió composta.
+function buildComp(date, { ignoreMissing = false } = {}) {
+  const monday = mondayOf(date);
+  const list = weekSessions(monday, date).filter((s) => !(s.date === date && s.day === OPTIONAL));
+  const legsRecent = lowerDayRecent(date);
+
+  if (!ignoreMissing) {
+    const missing = MAIN_DAYS.filter((id) => dayStatus(id, monday, date).st === 'nofet');
+    if (missing.length) {
+      const done = musclesDone(list);
+      const score = (id) => dayById(id).exercises.reduce((n, ex) => n + (window.PLAN.muscles?.[ex.key]?.main || []).reduce((a, m) => a + (done[m] || 0), 0), 0);
+      const pick = missing.slice().sort((a, b) => score(a) - score(b) || (dayById(a).kind === 'upper' ? -1 : 1))[0];
+      return { missing: pick, reduce: dayById(pick).kind === 'lower' && legsRecent, others: missing.filter((id) => id !== pick) };
+    }
+  }
+
+  // Exercicis saltats per molèstia aquesta setmana: fora.
+  const pain = new Set();
+  for (const s of list) {
+    const day = dayOf(s);
+    day.exercises.forEach((ex, i) => { if (skipInfo(s.skip?.[setKey(i, ex)])?.reason === 'pain') pain.add(ex.key); });
+  }
+
+  // Sèries pendents dels dies D1–D4.
+  const pending = {};
+  for (const s of list) {
+    if (s.plan || s.day === OPTIONAL) continue;
+    const day = dayOf(s);
+    day.exercises.forEach((ex, i) => {
+      if (pain.has(ex.key) || (legsRecent && HEAVY_LEGS.includes(ex.key))) return;
+      const n = countOf(s, i, ex);
+      const left = exSkipped(ex, i, s) ? n : n - (s.sets?.[setKey(i, ex)] || []).slice(0, n).filter(Boolean).length;
+      if (left <= 0) return;
+      if (!pending[ex.key] || pending[ex.key].sets < left) pending[ex.key] = { key: ex.key, sets: left, from: s.day };
+    });
+  }
+
+  const items = Object.values(pending);
+  const core = CORE_BLOCK.filter((c) => !pain.has(c.key)).map((c) => ({ ...c, from: 'core' }));
+  const has = (key) => items.some((p) => p.key === key) || core.some((c) => c.key === key);
+  const budget = SESSION_MAX - WARMUP_MIN - CARDIO_MIN;
+  const minutes = (plan) => strengthMinutes(dayOf({ plan, date }));
+  for (const key of COMP_ORDER) {
+    if (pain.has(key) || has(key)) continue;
+    const def = exDef(key, OPTIONAL);
+    const candidate = [...items, { key, sets: def.sets, from: OPTIONAL }];
+    if (minutes([...candidate, ...core]) > budget) continue;
+    items.push(candidate.at(-1));
+  }
+  return finishComp(orderComp([...items, ...core]), date);
+}
+
+// Compostos primer, aïllaments després i el core al final.
+function orderComp(plan) {
+  const rank = (p) => (p.from === 'core' || !EX_BY_KEY[p.key]?.weight ? 2 : EX_BY_KEY[p.key]?.compound ? 0 : 1);
+  return plan.map((p, i) => ({ p, i })).sort((a, b) => rank(a.p) - rank(b.p) || a.i - b.i).map((x) => x.p);
+}
+
+// Cardio: el que sobra fins a 80 min, entre 20 i 30.
+function finishComp(plan, date) {
+  const strength = strengthMinutes(dayOf({ plan, date }));
+  const cardioMin = Math.max(CARDIO_MIN, Math.min(CARDIO_MAX, SESSION_MAX - WARMUP_MIN - strength));
+  return { plan, cardioMin, minutes: WARMUP_MIN + strength + cardioMin };
+}
+
+function renderDayFive() {
+  const day = dayById(OPTIONAL);
+  const parts = [];
+  const head = `<header class="session-head" id="session-head">
+    <p class="eyebrow">D5 · ${fmtLong(state.date)}</p><h1>Dia opcional</h1>
+    <p class="focus">Natació o sessió de compensació</p></header>`;
+
+  if (state.swimDate === state.date) return head + swimForm(state.date);
+
+  const c = state.comp;
+  if (!c) {
+    const w = swim[state.date];
+    parts.push(head);
+    parts.push(`<section class="card chooser"><h2>Què fas avui?</h2>
+      ${w ? `<p class="chooser-note">${ICON_CHECK} Avui ja has nedat: <b>${esc(swimText(w))}</b>.</p>` : ''}
+      <button type="button" class="choice" data-act="comp-swim"><b>${w ? 'Edita la natació' : 'He anat a nedar'}</b><small>Minuts, estil i metres. Compta com a dia 5 i com a cardio.</small></button>
+      <button type="button" class="choice" data-act="comp-build"><b>Gimnàs: sessió de compensació</b><small>Recupera el més important del que ha faltat aquesta setmana, en 80 min com a màxim.</small></button>
+    </section>`);
+    return parts.join('');
+  }
+
+  if (c.missing) {
+    const d = dayById(c.missing);
+    parts.push(head);
+    parts.push(`<section class="card chooser"><h2>Aquesta setmana no has fet el ${d.id.toUpperCase()} · ${esc(d.title)}</h2>
+      <p>La sessió d'avui és aquell dia sencer, amb el seu escalfament i el seu cardio (≈ ${dayMinutes(d)} min).</p>
+      ${c.reduce ? '<p class="chooser-note">Ahir vas fer cames: avui una sèrie menys als exercicis pesats.</p>' : ''}
+      ${c.others.length ? `<p class="chooser-note">També falta: ${c.others.map((id) => id.toUpperCase()).join(', ')}. No s'acumula; queda com a no fet al resum de la setmana.</p>` : ''}
+      <div class="row"><button type="button" class="btn" data-act="comp-missing-go" data-day="${d.id}">Fes el ${d.id.toUpperCase()} avui</button>
+      <button type="button" class="ghost" data-act="comp-missing-skip">Prefereixo la compensació normal</button></div>
+      <button type="button" class="link" data-act="comp-back">Enrere</button>
+    </section>`);
+    return parts.join('');
+  }
+
+  const vday = dayOf({ plan: c.plan, cardioMin: c.cardioMin, date: state.date });
+  const inPlan = new Set(c.plan.map((p) => p.key));
+  const options = Object.values(EX_BY_KEY).filter((ex) => !inPlan.has(ex.key)).map((ex) => `<option value="${esc(ex.key)}">${esc(ex.name)}</option>`).join('');
+  const label = (p) => (p.from === 'core' ? 'Core' : p.from === OPTIONAL ? 'D5' : `Pendent del ${p.from.toUpperCase()}`);
+  parts.push(head);
+  parts.push(`<section class="card chooser"><h2>Sessió de compensació <span class="dur tabular">≈ ${c.minutes} min</span></h2>
+    <ol class="comp-list">${vday.exercises.map((ex) => `<li data-key="${esc(ex.key)}">
+      <span class="comp-main"><b>${esc(ex.name)}</b><small>${ex.sets} × ${esc(ex.reps)} · <em class="from-tag">${label(ex)}</em></small></span>
+      <button type="button" class="ghost icon" data-act="comp-remove" aria-label="Treu ${esc(ex.name)}">✕</button></li>`).join('')}</ol>
+    <p class="chooser-note">Escalfament ${WARMUP_MIN} min · força ${c.minutes - WARMUP_MIN - c.cardioMin} min · cardio ${c.cardioMin} min.</p>
+    ${options ? `<div class="comp-add"><select data-comp-add aria-label="Afegeix un exercici">${options}</select><button type="button" class="ghost" data-act="comp-add">Afegeix</button></div>` : ''}
+    <div class="row"><button type="button" class="btn" data-act="comp-start">Comença la sessió</button><button type="button" class="ghost" data-act="comp-back">Enrere</button></div>
+  </section>`);
+  return parts.join('');
+}
+
+// Crea la sessió d'un dia que faltava, amb una sèrie menys als pesats si ahir vas fer cames.
+function startMissingDay(id, reduce) {
+  setPlanned(state.date, id);
+  persistSchedule();
+  state.day = id;
+  const s = ensureSession();
+  if (reduce) {
+    dayById(id).exercises.forEach((ex, i) => { if (HEAVY_LEGS.includes(ex.key) && ex.sets > 1) s.count[setKey(i, ex)] = ex.sets - 1; });
+    s.banner = 'Ahir vas fer cames: avui una sèrie menys als exercicis pesats.';
+    s.updated = new Date().toISOString();
+    persist();
+  }
+  state.comp = null;
+}
+
+function startComp(c) {
+  const s = ensureSession();
+  s.plan = c.plan.map((p) => ({ key: p.key, sets: p.sets, from: p.from }));
+  s.cardioMin = c.cardioMin;
+  s.updated = new Date().toISOString();
+  persist();
+  state.comp = null;
+}
 
 // ---------- Temporitzador de descans ----------
 
@@ -615,7 +1013,7 @@ function sized(arr, n, fill) {
 
 function exerciseOf(card) {
   const i = Number(card.dataset.i);
-  const ex = dayById(state.day).exercises[i];
+  const ex = currentDay().exercises[i];
   return { i, ex, k: setKey(i, ex) };
 }
 
@@ -631,7 +1029,7 @@ function toggleSet(card, btn) {
   btn.setAttribute('aria-pressed', String(arr[j]));
   if (exDone(ex, i, s) && !wasDone) buzz();
   if (arr[j]) {
-    const pair = pairOf(dayById(state.day), i);
+    const pair = pairOf(currentDay(), i);
     startRest(restOf(ex, i), pair ? `Ara: ${pair.name}` : 'Descans');
   }
   save(s);
@@ -659,7 +1057,7 @@ function changeCount(card, delta) {
   const { i, ex, k } = exerciseOf(card);
   const s = ensureSession();
   const n = Math.min(MAX_SETS, Math.max(1, countOf(s, i, ex) + delta));
-  if (n === ex.sets) delete s.count[k]; else s.count[k] = n;
+  if (n === defaultSets(ex, s)) delete s.count[k]; else s.count[k] = n;
   if (s.sets[k]) s.sets[k] = sized(s.sets[k], n, false);
   if (s.reps[k]) s.reps[k] = sized(s.reps[k], n, '');
   save(s);
@@ -692,13 +1090,65 @@ trainEl.addEventListener('click', (e) => {
   else if (act === 'photo') openPhoto(exerciseOf(card).ex);
   else if (act === 'anim-toggle') window.ANIM.toggle(btn.closest('.anim'));
   else if (act === 'anim-view') window.ANIM.flip(btn.closest('.anim'));
-  else if (act === 'skip' || act === 'unskip') {
+  else if (act === 'skip') {
+    state.skipping = exerciseOf(card).k;
+    state.skipZone = false;
+    refreshCard(card);
+  } else if (act === 'skip-cancel') {
+    state.skipping = '';
+    refreshCard(card);
+  } else if (act === 'skip-reason' && btn.dataset.reason === 'pain') {
+    state.skipZone = true;
+    refreshCard(card);
+  } else if (act === 'skip-reason' || act === 'skip-zone' || act === 'unskip') {
     const { k } = exerciseOf(card);
     const s = ensureSession();
-    if (act === 'skip') s.skip[k] = true; else delete s.skip[k];
+    if (act === 'unskip') delete s.skip[k];
+    else s.skip[k] = act === 'skip-zone' ? { reason: 'pain', zone: btn.dataset.zone } : { reason: btn.dataset.reason };
+    state.skipping = '';
     save(s);
     refreshCard(card);
     updateProgress();
+  } else if (act === 'deload-yes' || act === 'deload-no' || act === 'deload-undo') {
+    const monday = mondayOf(todayISO());
+    if (act === 'deload-yes') { meta.prevDeload = meta.lastDeload || ''; meta.lastDeload = monday; meta.deloadWeek = monday; }
+    else if (act === 'deload-no') meta.deloadDismissed = monday;
+    else { delete meta.deloadWeek; meta.lastDeload = meta.prevDeload || undefined; if (!meta.lastDeload) delete meta.lastDeload; meta.deloadDismissed = monday; }
+    saveJSON(META_KEY, meta);
+    renderTrain();
+  } else if (act === 'comp-swim') {
+    state.swimDate = state.date;
+    renderTrain();
+  } else if (act === 'swim-save' || act === 'swim-cancel') {
+    if (act === 'swim-save' && !saveSwim(btn.closest('[data-swim-date]'))) return;
+    state.swimDate = '';
+    renderTrain();
+  } else if (act === 'comp-build') {
+    state.comp = buildComp(state.date);
+    renderTrain();
+  } else if (act === 'comp-missing-skip') {
+    state.comp = buildComp(state.date, { ignoreMissing: true });
+    renderTrain();
+  } else if (act === 'comp-missing-go') {
+    startMissingDay(btn.dataset.day, !!state.comp?.reduce);
+    renderAll();
+  } else if (act === 'comp-back') {
+    state.comp = null;
+    renderTrain();
+  } else if (act === 'comp-remove') {
+    const key = btn.closest('[data-key]').dataset.key;
+    state.comp = finishComp(state.comp.plan.filter((p) => p.key !== key), state.date);
+    renderTrain();
+  } else if (act === 'comp-add') {
+    const key = trainEl.querySelector('[data-comp-add]').value;
+    const def = EX_BY_KEY[key];
+    if (!def) return;
+    // Els afegits a mà compten com a extra (D5) o, si són de terra, com a core.
+    state.comp = finishComp(orderComp([...state.comp.plan, { key, sets: def.sets, from: def.weight ? OPTIONAL : 'core' }]), state.date);
+    renderTrain();
+  } else if (act === 'comp-start') {
+    startComp(state.comp);
+    renderAll();
   } else if (act === 'finish' || act === 'reopen') {
     const s = ensureSession();
     s.finished = act === 'finish';
@@ -734,6 +1184,20 @@ trainEl.addEventListener('input', (e) => {
     const v = input.value.trim();
     if (v) machine[input.dataset.setting] = v; else delete machine[input.dataset.setting];
     saveJSON(SETTINGS_KEY, machine);
+    return;
+  } else if (input.matches('input[data-step]')) {
+    const v = input.value.trim();
+    if (v) steps[input.dataset.step] = v; else delete steps[input.dataset.step];
+    saveJSON(STEPS_KEY, steps);
+    return;
+  } else if (input.matches('input[data-skipnote]')) {
+    const s = ensureSession();
+    const k = input.dataset.skipnote;
+    const info = skipInfo(s.skip[k]) || { reason: 'pain', zone: 'altre' };
+    const v = input.value.trim();
+    if (v) info.note = v; else delete info.note;
+    s.skip[k] = info;
+    save(s);
     return;
   } else if (input.matches('input[data-rep]')) {
     const card = input.closest('.ex');
@@ -795,10 +1259,16 @@ window.addEventListener('popstate', () => { if (lightbox.open) lightbox.close();
 function sessionStatus(date, w, today) {
   const s = sessions[keyOf(date, w)];
   if (s) {
-    const pct = progressOf(dayById(w), s).pct;
+    const pct = progressOf(dayOf(s), s).pct;
     if (pct === 100) return { cls: 'done', text: `${ICON_CHECK} Fet` };
     if (s.finished) return { cls: 'done', text: `${ICON_CHECK} ${pct}%` };
     return { cls: 'partial', text: `${pct}%` };
+  }
+  if (w === OPTIONAL) {
+    // La natació de qualsevol dia de la setmana compta com a dia 5.
+    if (swim[date]) return { cls: 'done', text: `${ICON_CHECK} Natació` };
+    const other = swimInWeek(mondayOf(date))[0];
+    if (other) return { cls: 'done', text: `${ICON_CHECK} Natació ${WEEKDAYS[parseISO(other).getDay()]}` };
   }
   if (date < today) return { cls: 'missed', text: 'No fet' };
   if (date === today) return { cls: 'today', text: 'Avui' };
@@ -807,13 +1277,13 @@ function sessionStatus(date, w, today) {
 
 // Resum del que es va fer: un element per exercici amb dades (pes, repeticions o sèries).
 function sessionSummary(s) {
-  const day = dayById(s.day);
+  const day = dayOf(s);
   const { pct } = progressOf(day, s);
   const items = [];
   if (s.warm) items.push({ text: 'Escalfament', done: true });
   day.exercises.forEach((ex, i) => {
     const k = setKey(i, ex);
-    if (exSkipped(ex, i, s)) { items.push({ html: `${esc(ex.name)} · saltat`, skipped: true }); return; }
+    if (exSkipped(ex, i, s)) { items.push({ html: `${esc(ex.name)} · saltat (${esc(skipText(skipInfo(s.skip[k])).toLowerCase())})`, skipped: true }); return; }
     const n = countOf(s, i, ex);
     const doneSets = (s.sets?.[k] || []).slice(0, n).filter(Boolean).length;
     const reps = (s.reps?.[k] || []).slice(0, n).filter(hasText);
@@ -844,11 +1314,18 @@ function calActions(date, w, today) {
   const isWorkout = w !== 'rest';
   // Primer, el resum de les sessions d'aquell dia (la planificada primer).
   Object.values(sessions)
-    .filter((s) => s.date === date && dayById(s.day))
+    .filter((s) => s.date === date && dayOf(s))
     .sort((a, b) => (b.day === w) - (a.day === w) || a.day.localeCompare(b.day))
     .forEach((s) => acts.push(sessionSummary(s)));
+  if (date <= today) {
+    if (state.swimDate === date) acts.push(swimForm(date));
+    else if (swim[date]) acts.push(swimSummary(date));
+  }
   if (isWorkout && date <= today && !sessions[keyOf(date, w)]) {
     acts.push(`<button type="button" class="btn" data-act="cal-train">${date === today ? 'Entrena' : 'Registra-la'}</button>`);
+  }
+  if (date <= today && !swim[date] && state.swimDate !== date) {
+    acts.push('<button type="button" class="ghost" data-act="swim-edit">He anat a nedar</button>');
   }
   if (date >= today) {
     if (isWorkout) {
@@ -880,23 +1357,25 @@ function renderCalendar(message = '', kind = '') {
     const day = dayById(w);
     const st = day ? sessionStatus(date, w, today) : { cls: '', text: '' };
     const extra = Object.values(sessions)
-      .filter((s) => s.date === date && s.day !== w && dayById(s.day))
-      .map((s) => `${s.day.toUpperCase()} · ${progressOf(dayById(s.day), s).pct}%`);
+      .filter((s) => s.date === date && s.day !== w && dayOf(s))
+      .map((s) => `${s.day.toUpperCase()} · ${progressOf(dayOf(s), s).pct}%`);
+    if (swim[date] && w !== OPTIONAL) extra.push(`Natació · ${swimText(swim[date])}`);
     const actions = calActions(date, w, today);
     const open = state.calOpen === date && actions;
     const moved = schedule[date] !== undefined;
     const d = parseISO(date);
+    const title = day && sessions[keyOf(date, w)]?.plan ? 'Sessió de compensació' : day?.title;
 
     return `<li class="cal-day${date === today ? ' is-today' : ''}${!day ? ' is-rest' : ''}" data-date="${date}">
       <button type="button" class="cal-row" data-act="cal-open"${actions ? ` aria-expanded="${!!open}"` : ' disabled'}>
         <span class="cal-date"><small>${WEEKDAYS[d.getDay()]}</small><b class="tabular">${d.getDate()}</b></span>
         <span class="cal-main">
           ${day
-            ? `<b>${day.id.toUpperCase()} · ${esc(day.title)}</b><small>${esc(day.focus)} · ≈ ${dayMinutes(day)} min${moved ? ' · <em>Canviat</em>' : ''}</small>`
+            ? `<b>${day.id.toUpperCase()} · ${esc(title)}</b><small>${esc(day.focus)} · ≈ ${dayMinutes(day)} min${moved ? ' · <em>Canviat</em>' : ''}</small>`
             : `<b class="muted">Descans</b>${moved ? '<small><em>Canviat</em></small>' : ''}`}
-          ${extra.length ? `<small>També: ${esc(extra.join(', '))}</small>` : ''}
+          ${extra.length ? `<small>${day ? 'També: ' : ''}${esc(extra.join(', '))}</small>` : ''}
         </span>
-        <span class="cal-status ${st.cls}">${st.text}</span>
+        <span class="cal-status ${st.cls}">${!day && swim[date] ? `${ICON_CHECK} Natació` : st.text}</span>
       </button>
       ${open ? `<div class="cal-actions">${actions}</div>` : ''}
     </li>`;
@@ -912,7 +1391,81 @@ function renderCalendar(message = '', kind = '') {
     <p class="cal-sum">${wk.done} de ${wk.planned} entrenaments fets${optPlanned || wk.optional ? ` · opcional: ${wk.optional ? 'fet' : 'pendent'}` : ''}</p>
     <p class="status ${kind}" role="status">${message}</p>
     <ul class="cal">${rows}</ul>
-    <p class="hist-intro">Toca un dia per entrenar, aplaçar-lo o moure'l.</p>`;
+    <p class="hist-intro">Toca un dia per entrenar, aplaçar-lo, moure'l o apuntar-hi natació.</p>
+    ${weekReport(state.week)}`;
+}
+
+// ---------- Resum de la setmana ----------
+
+// Sèries planificades per múscul: els dies D1–D4 previstos aquella setmana (principals 1, secundaris 0,5).
+function musclesPlanned(monday) {
+  const by = {};
+  for (const date of weekDays(monday)) {
+    const day = dayById(planned(date));
+    if (!day || day.id === OPTIONAL) continue;
+    for (const ex of day.exercises) {
+      const m = window.PLAN.muscles?.[ex.key];
+      if (!m) continue;
+      m.main.forEach((id) => { by[id] = (by[id] || 0) + ex.sets; });
+      m.aux.forEach((id) => { by[id] = (by[id] || 0) + ex.sets / 2; });
+    }
+  }
+  return by;
+}
+
+function weekReport(monday) {
+  const today = todayISO();
+  const end = addDays(monday, 6);
+  const list = weekSessions(monday).sort((a, b) => a.date.localeCompare(b.date));
+  const swims = swimInWeek(monday);
+  if (!list.length && !swims.length && monday > today) return '';
+
+  const sessionRows = list.map((s) => {
+    const day = dayOf(s);
+    const { done, planned: total } = setsOfSession(s);
+    const skipped = [];
+    day.exercises.forEach((ex, i) => { const info = skipInfo(s.skip?.[setKey(i, ex)]); if (info) skipped.push(`${ex.name} (${skipText(info).toLowerCase()})`); });
+    const pct = total ? done / total : 0;
+    const cls = pct >= 0.8 ? 'done' : pct > 0 ? 'partial' : 'missed';
+    return `<li><span class="wr-main"><b>${s.day.toUpperCase()} · ${esc(day.short)}</b><small>${fmtDay(s.date)}${skipped.length ? ` · saltats: ${esc(skipped.join(', '))}` : ''}</small></span>
+      <span class="cal-status ${cls} tabular">${done}/${total} sèries</span></li>`;
+  });
+  swims.forEach((d) => sessionRows.push(`<li><span class="wr-main"><b>Natació</b><small>${fmtDay(d)}</small></span><span class="cal-status done tabular">${esc(swimText(swim[d]))}</span></li>`));
+
+  const plannedBy = musclesPlanned(monday);
+  const doneBy = musclesDone(list);
+  const over = end < today;
+  const ids = [...new Set([...Object.keys(plannedBy), ...Object.keys(doneBy)])]
+    .sort((a, b) => (plannedBy[b] || 0) - (plannedBy[a] || 0) || (doneBy[b] || 0) - (doneBy[a] || 0));
+  const bars = ids.map((id) => {
+    const p = plannedBy[id] || 0, d = doneBy[id] || 0;
+    const low = over && p > 0 && d / p < 0.7;
+    const pct = p ? Math.min(100, (d / p) * 100) : (d ? 100 : 0);
+    return `<li class="${low ? 'low' : ''}"><span class="mb-name">${esc(window.MUSCLES?.names[id] || id)}</span>
+      <span class="mbar"><span style="width:${pct.toFixed(0)}%"></span></span>
+      <span class="mb-val tabular">${fmtKg(d)}/${fmtKg(p)}</span></li>`;
+  }).join('');
+
+  let cardio = swims.reduce((n, d) => n + swim[d].minutes, 0);
+  for (const s of list) if (s.cardio) cardio += minutesOf(dayOf(s).cardio);
+
+  const pains = [];
+  for (const s of list) {
+    const day = dayOf(s);
+    day.exercises.forEach((ex, i) => {
+      const info = skipInfo(s.skip?.[setKey(i, ex)]);
+      if (info?.reason === 'pain') pains.push(`<li><b>${fmtDay(s.date)}</b> · ${esc(ex.name)} · ${esc(ZONES[info.zone])}${info.note ? ` · <em>${esc(info.note)}</em>` : ''}</li>`);
+    });
+  }
+
+  return `<section class="week-report" aria-label="Resum de la setmana">
+    <h2 class="sec">Resum de la setmana</h2>
+    ${sessionRows.length ? `<ul class="wr-sessions">${sessionRows.join('')}</ul>` : '<p class="cal-log-empty">Encara no hi ha cap sessió aquesta setmana.</p>'}
+    ${bars ? `<h3 class="wr-sub">Sèries per múscul <small>fetes / planificades${over ? ' · en taronja, menys del 70 %' : ''}</small></h3><ul class="mbars">${bars}</ul>` : ''}
+    <p class="wr-line"><b>Cardio:</b> ${cardio ? `${cardio} min${swims.length ? ' (gimnàs i natació)' : ''}` : 'cap registrat'}</p>
+    <p class="wr-line"><b>Molèsties:</b> ${pains.length ? '' : 'cap'}</p>
+    ${pains.length ? `<ul class="wr-pains">${pains.join('')}</ul>` : ''}
+  </section>`;
 }
 
 calendarEl.addEventListener('click', (e) => {
@@ -922,7 +1475,11 @@ calendarEl.addEventListener('click', (e) => {
   const date = btn.closest('[data-date]')?.dataset.date;
   const w = date && planned(date);
 
-  if (act === 'cal-prev') { state.week = addDays(state.week, -7); state.calOpen = ''; renderCalendar(); }
+  if (act === 'swim-edit') { state.swimDate = date; state.calOpen = date; renderCalendar(); }
+  else if (act === 'swim-cancel') { state.swimDate = ''; renderCalendar(); }
+  else if (act === 'swim-save') { if (saveSwim(btn.closest('[data-swim-date]'))) renderCalendar(`Natació del ${fmtDay(date)} desada.`, 'ok'); }
+  else if (act === 'swim-delete') { delete swim[date]; saveJSON(SWIM_KEY, swim); renderCalendar(`Natació del ${fmtDay(date)} esborrada.`, 'ok'); }
+  else if (act === 'cal-prev') { state.week = addDays(state.week, -7); state.calOpen = ''; renderCalendar(); }
   else if (act === 'cal-next') { state.week = addDays(state.week, 7); state.calOpen = ''; renderCalendar(); }
   else if (act === 'cal-now') { state.week = mondayOf(todayISO()); state.calOpen = ''; renderCalendar(); }
   else if (act === 'cal-open') { state.calOpen = state.calOpen === date ? '' : date; renderCalendar(); }
@@ -972,7 +1529,7 @@ const fmtInt = (n) => Math.round(n).toLocaleString('ca-ES');
 
 // Volum = kg × repeticions de les sèries fetes (sense comptar l'assistència de les dominades).
 function sessionVolume(s) {
-  const day = dayById(s.day);
+  const day = dayOf(s);
   let volume = 0, sets = 0;
   day.exercises.forEach((ex, i) => {
     const k = setKey(i, ex);
@@ -993,12 +1550,13 @@ function weekStats(monday) {
   const days = weekDays(monday);
   const end = days[6];
   const mainIds = [...new Set(days.map(planned).filter((w) => dayById(w) && w !== OPTIONAL))];
-  const inWeek = Object.values(sessions).filter((s) => s.date >= monday && s.date <= end && dayById(s.day) && !isEmpty(s));
-  const doneIds = new Set(inWeek.map((s) => s.day));
+  const inWeek = Object.values(sessions).filter((s) => s.date >= monday && s.date <= end && dayOf(s) && !isEmpty(s));
+  const doneIds = new Set(inWeek.filter((s) => !s.plan || setsOfSession(s).done > 0).map((s) => s.day));
   const done = mainIds.filter((w) => doneIds.has(w)).length;
   let volume = 0, sets = 0;
   for (const s of inWeek) { const v = sessionVolume(s); volume += v.volume; sets += v.sets; }
-  return { monday, end, planned: mainIds.length, done, optional: doneIds.has(OPTIONAL), complete: mainIds.length > 0 && done >= mainIds.length, volume, sets };
+  // L'opcional compta amb la sessió del dia 5 o amb natació qualsevol dia de la setmana.
+  return { monday, end, planned: mainIds.length, done, optional: doneIds.has(OPTIONAL) || swimInWeek(monday).length > 0, complete: mainIds.length > 0 && done >= mainIds.length, volume, sets };
 }
 
 // Setmanes completes seguides, comptant l'actual només si ja està completa.
@@ -1190,7 +1748,7 @@ function showNearest(e) {
 function renderHistory(message = '', kind = '') {
   const list = Object.entries(sessions).sort(([, a], [, b]) => byRecent(a, b));
   const rows = list.map(([k, s]) => {
-    const day = dayById(s.day);
+    const day = dayOf(s);
     const pct = day ? progressOf(day, s).pct : null;
     return `<li><button type="button" data-act="open" data-k="${esc(k)}">
       <span class="h-day">${esc(s.day.toUpperCase())} · ${esc(day?.short ?? 'Dia antic')}</span>
@@ -1237,7 +1795,7 @@ historyEl.addEventListener('click', (e) => {
   else if (btn.dataset.act === 'share') shareData();
   else if (btn.dataset.act === 'open') {
     const s = sessions[btn.dataset.k];
-    if (!s || !dayById(s.day)) return;
+    if (!s || !dayOf(s)) return;
     state.date = s.date;
     state.day = s.day;
     state.restNote = '';
@@ -1274,7 +1832,10 @@ function updateBackupDot() {
 }
 
 function exportFile() {
-  const payload = { app: 'gimnas', version: 3, exported: new Date().toISOString(), sessions, schedule, machine };
+  const payload = {
+    app: 'gimnas', version: 4, exported: new Date().toISOString(), sessions, schedule, machine, steps, swim,
+    meta: { lastDeload: meta.lastDeload, deloadWeek: meta.deloadWeek },
+  };
   return new File([JSON.stringify(payload, null, 2)], `gimnas-${todayISO()}.json`, { type: 'application/json' });
 }
 
@@ -1322,8 +1883,26 @@ function cleanSession(s) {
   for (const [k, n] of Object.entries(s.count || {})) if (Number.isInteger(n) && n >= 1 && n <= MAX_SETS) counts[k] = n;
   for (const [k, v] of Object.entries(s.kg || {})) if (hasText(v)) kg[k] = String(v).trim();
   const skip = {};
-  for (const [k, v] of Object.entries(s.skip || {})) if (v) skip[k] = true;
-  return { date: s.date, day: s.day, warm: !!s.warm, cardio: !!s.cardio, sets: bools, reps: texts, count: counts, kg, skip, finished: !!s.finished, updated: String(s.updated || '') };
+  for (const [k, v] of Object.entries(s.skip || {})) { const info = skipInfo(v); if (info) skip[k] = info; }
+  const out = { date: s.date, day: s.day, warm: !!s.warm, cardio: !!s.cardio, sets: bools, reps: texts, count: counts, kg, skip, finished: !!s.finished, updated: String(s.updated || '') };
+  // Sessió de compensació: la llista generada d'exercicis.
+  if (Array.isArray(s.plan)) {
+    const plan = s.plan.filter((p) => p && EX_BY_KEY[p.key] && Number.isInteger(p.sets) && p.sets >= 1 && p.sets <= MAX_SETS)
+      .map((p) => ({ key: p.key, sets: p.sets, from: /^(d\d+|core)$/.test(p.from) ? p.from : OPTIONAL }));
+    if (plan.length) { out.plan = plan; out.cardioMin = Number.isInteger(s.cardioMin) ? s.cardioMin : CARDIO_MIN; }
+  }
+  if (hasText(s.banner)) out.banner = String(s.banner).trim();
+  return out;
+}
+
+const SWIM_RE = /^\d+$/;
+function cleanSwim(w) {
+  const minutes = Number(w?.minutes);
+  if (!Number.isInteger(minutes) || minutes <= 0) return null;
+  const out = { minutes, style: SWIM_STYLES[w.style] ? w.style : 'crol', updated: String(w.updated || '') };
+  const meters = Number(w.meters);
+  if (meters > 0) out.meters = meters;
+  return out;
 }
 
 // Fusiona: les sessions noves s'afegeixen; si ja existeix, guanya la modificada més tard.
@@ -1351,6 +1930,25 @@ function mergeImport(data) {
   if (data && data.machine && typeof data.machine === 'object') {
     for (const [k, v] of Object.entries(data.machine)) if (hasText(v) && machine[k] === undefined) machine[k] = String(v).trim();
     saveJSON(SETTINGS_KEY, machine);
+  }
+
+  // Dades de la versió 4: pas de pes, natació i descàrregues. Les còpies antigues no en tenen.
+  if (data && data.steps && typeof data.steps === 'object') {
+    for (const [k, v] of Object.entries(data.steps)) if (hasText(v) && steps[k] === undefined) steps[k] = String(v).trim();
+    saveJSON(STEPS_KEY, steps);
+  }
+  if (data && data.swim && typeof data.swim === 'object') {
+    for (const [date, w] of Object.entries(data.swim)) {
+      const clean = ISO_RE.test(date) ? cleanSwim(w) : null;
+      if (clean && (!swim[date] || clean.updated > String(swim[date].updated || ''))) swim[date] = clean;
+    }
+    saveJSON(SWIM_KEY, swim);
+  }
+  if (data && data.meta && typeof data.meta === 'object') {
+    const d = data.meta;
+    if (ISO_RE.test(d.lastDeload || '') && (!meta.lastDeload || d.lastDeload > meta.lastDeload)) meta.lastDeload = d.lastDeload;
+    if (ISO_RE.test(d.deloadWeek || '') && !meta.deloadWeek && d.deloadWeek >= mondayOf(todayISO())) meta.deloadWeek = d.deloadWeek;
+    saveJSON(META_KEY, meta);
   }
   return { added, updated, skipped };
 }
