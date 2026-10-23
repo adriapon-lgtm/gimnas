@@ -77,7 +77,9 @@ function isEmpty(s) {
     && !Object.values(s.sets || {}).some((a) => a.some(Boolean))
     && !Object.values(s.kg || {}).some(hasText)
     && !Object.values(s.reps || {}).some((a) => a.some(hasText))
-    && !Object.keys(s.count || {}).length;
+    && !Object.keys(s.count || {}).length
+    && !Object.keys(s.skip || {}).length
+    && !s.finished;
 }
 
 const state = { screen: 'train', date: todayISO(), day: 'd1', editing: false, restNote: '', week: mondayOf(todayISO()), calOpen: '', progEx: '' };
@@ -91,7 +93,7 @@ function ensureSession() {
     sessions[k] = { date: state.date, day: state.day, warm: false, cardio: false, sets: {}, reps: {}, count: {}, kg: {}, updated: '' };
   }
   const s = sessions[k];
-  s.sets ||= {}; s.reps ||= {}; s.count ||= {}; s.kg ||= {};
+  s.sets ||= {}; s.reps ||= {}; s.count ||= {}; s.kg ||= {}; s.skip ||= {};
   return s;
 }
 
@@ -110,11 +112,18 @@ function exDone(ex, i, s) {
   return n > 0 && !!a && a.length >= n && a.slice(0, n).every(Boolean);
 }
 
+const exSkipped = (ex, i, s) => !!s?.skip?.[setKey(i, ex)];
+
+// Els exercicis saltats no compten al total: es pot completar el dia sense fer-los.
 function progressOf(day, s) {
-  const total = day.exercises.length + 2;
+  let skipped = 0;
   let done = (s?.warm ? 1 : 0) + (s?.cardio ? 1 : 0);
-  day.exercises.forEach((ex, i) => { if (exDone(ex, i, s)) done++; });
-  return { done, total, pct: Math.round((done / total) * 100) };
+  day.exercises.forEach((ex, i) => {
+    if (exSkipped(ex, i, s)) skipped++;
+    else if (exDone(ex, i, s)) done++;
+  });
+  const total = day.exercises.length + 2 - skipped;
+  return { done, total, skipped, pct: Math.round((done / total) * 100), finished: !!s?.finished };
 }
 
 // Última sessió anterior amb pes o repeticions per a aquesta clau d'exercici,
@@ -291,6 +300,20 @@ function exerciseInner(ex, i, s) {
         <img src="img/${ex.photo}.jpg" alt="" width="72" height="72" loading="lazy" decoding="async"></button>`
     : `<div class="thumb none" aria-hidden="true">${esc(ex.place || 'Terra')}</div>`;
 
+  const top = `<div class="ex-top">${thumb}
+      <div class="ex-info">
+        <h2><span class="num">${i + 1}.</span>${esc(ex.name)}</h2>
+        <p class="machine">${esc(ex.machine)}</p>
+        <p class="target tabular">${ex.sets} × ${esc(ex.reps)}</p>
+      </div>
+      <span class="tick" aria-label="Completat">${ICON_CHECK}</span>
+    </div>`;
+
+  if (exSkipped(ex, i, s)) {
+    return `${top}<div class="skipped-row"><span>Saltat avui</span>
+      <button type="button" class="ghost" data-act="unskip">Desfés</button></div>`;
+  }
+
   let kg = '';
   // El suggeriment es basa en el mateix dia del pla si n'hi ha (el hip thrust del D4 és més pesat que el del D2).
   const tip = suggestion(ex, lastFor(ex.key, true) || last);
@@ -319,14 +342,7 @@ function exerciseInner(ex, i, s) {
     : '';
 
   return `
-    <div class="ex-top">${thumb}
-      <div class="ex-info">
-        <h2><span class="num">${i + 1}.</span>${esc(ex.name)}</h2>
-        <p class="machine">${esc(ex.machine)}</p>
-        <p class="target tabular">${ex.sets} × ${esc(ex.reps)}</p>
-      </div>
-      <span class="tick" aria-label="Completat">${ICON_CHECK}</span>
-    </div>
+    ${top}
     ${muscleRow(ex)}
     ${how}
     <div class="sets" role="group" aria-label="Sèries">${cols}</div>
@@ -341,7 +357,10 @@ function exerciseInner(ex, i, s) {
         <span class="tabular">${plural(n, 'sèrie', 'sèries')}</span>
         <button type="button" data-act="more" aria-label="Afegeix una sèrie"${n >= MAX_SETS ? ' disabled' : ''}>+</button>
       </div>
-      <button type="button" class="complete" data-act="complete" aria-pressed="${done}">${done ? `${ICON_CHECK} Completat` : 'Completa'}</button>
+      <span class="ex-btns">
+        <button type="button" class="ghost" data-act="skip">Salta</button>
+        <button type="button" class="complete" data-act="complete" aria-pressed="${done}">${done ? `${ICON_CHECK} Completat` : 'Completa'}</button>
+      </span>
     </div>`;
 }
 
@@ -372,7 +391,7 @@ function musclesToday() {
   const hl = {}, sets = {};
   dayById(state.day).exercises.forEach((ex, i) => {
     const m = window.PLAN.muscles?.[ex.key];
-    if (!m) return;
+    if (!m || exSkipped(ex, i, s)) return;
     const done = (s?.sets?.[setKey(i, ex)] || []).slice(0, countOf(s, i, ex)).filter(Boolean).length;
     if (!done) return;
     m.aux.forEach((id) => { if (hl[id] !== 'on') hl[id] = 'aux'; });
@@ -396,7 +415,7 @@ function renderMusclesToday() {
 }
 
 const exerciseCard = (ex, i, s) =>
-  `<li class="ex${exDone(ex, i, s) ? ' done' : ''}" data-i="${i}">${exerciseInner(ex, i, s)}</li>`;
+  `<li class="ex${exDone(ex, i, s) ? ' done' : ''}${exSkipped(ex, i, s) ? ' skipped' : ''}" data-i="${i}">${exerciseInner(ex, i, s)}</li>`;
 
 // Torna a pintar una targeta i manté «Com fer-ho» obert si ho estava.
 function refreshCard(card) {
@@ -406,7 +425,21 @@ function refreshCard(card) {
   const wasOpen = card.querySelector('details.how')?.open;
   card.innerHTML = exerciseInner(ex, i, s);
   card.classList.toggle('done', exDone(ex, i, s));
-  if (wasOpen) card.querySelector('details.how').open = true;
+  card.classList.toggle('skipped', exSkipped(ex, i, s));
+  const how = card.querySelector('details.how');
+  if (wasOpen && how) how.open = true;
+}
+
+// Bloc del final: acabar la sessió encara que no estigui tot fet, o reobrir-la.
+function finishBlock(s) {
+  const { done, total, skipped, pct } = progressOf(dayById(state.day), s);
+  const skippedText = skipped ? ` · ${plural(skipped, 'saltat', 'saltats')}` : '';
+  if (s?.finished) {
+    return `<p class="finish-done">${ICON_CHECK} Sessió acabada · ${done} de ${total}${skippedText}</p>
+      <button type="button" class="ghost" data-act="reopen">Reobre la sessió</button>`;
+  }
+  return `<button type="button" class="btn" data-act="finish">Acaba la sessió</button>
+    <p>${done === total ? 'Tot fet. Deixa-la acabada i tanca el dia.' : `Pots acabar-la encara que no estigui tot fet: es desarà al ${pct}%${skippedText}.`}</p>`;
 }
 
 function syncCard(card) {
@@ -450,6 +483,7 @@ function renderTrain() {
   parts.push(`<ol class="exercises">${day.exercises.map((ex, i) => exerciseCard(ex, i, s)).join('')}</ol>`);
   parts.push(checkItem('cardio', 'Cardio', day.cardio, null, !!s?.cardio));
   parts.push('<section class="card muscles-today" id="muscles-today" aria-label="Músculs treballats avui"></section>');
+  parts.push('<div class="finish" id="finish"></div>');
   parts.push(`<div class="reset" id="reset">${resetIdle()}</div>`);
 
   trainEl.innerHTML = parts.join('');
@@ -457,15 +491,21 @@ function renderTrain() {
 }
 
 function updateProgress() {
-  const { done, total, pct } = progressOf(dayById(state.day), getSession());
-  $('#progress-label').innerHTML = done === total
-    ? '<b>Sessió completada</b>'
-    : `<b>${done}</b> de ${total} completats`;
+  const s = getSession();
+  const { done, total, pct, skipped, finished } = progressOf(dayById(state.day), s);
+  const skippedText = skipped ? ` · ${plural(skipped, 'saltat', 'saltats')}` : '';
+  $('#progress-label').innerHTML = finished
+    ? `<b>Sessió acabada</b> · ${done} de ${total}${skippedText}`
+    : done === total
+      ? `<b>Sessió completada</b>${skippedText}`
+      : `<b>${done}</b> de ${total} completats${skippedText}`;
   $('#progress-pct').textContent = `${pct}%`;
   const C = 2 * Math.PI * 30; // perímetre del cercle de l'anell
   $('#progress-fill').style.strokeDasharray = C;
   $('#progress-fill').style.strokeDashoffset = C * (1 - pct / 100);
-  $('#session-head').classList.toggle('complete', done === total);
+  $('#session-head').classList.toggle('complete', finished || done === total);
+  const fin = $('#finish');
+  if (fin) fin.innerHTML = finishBlock(s);
   renderMusclesToday();
   daysEl.querySelector(`[data-day="${state.day}"]`)?.classList.toggle('has-data', !!getSession());
 }
@@ -625,7 +665,22 @@ trainEl.addEventListener('click', (e) => {
   else if (act === 'toggle') toggleField(btn.dataset.field);
   else if (act === 'photo') openPhoto(exerciseOf(card).ex);
   else if (act === 'anim-toggle') window.ANIM.toggle(btn.closest('.anim'));
-  else if (act === 'reset') {
+  else if (act === 'anim-view') window.ANIM.flip(btn.closest('.anim'));
+  else if (act === 'skip' || act === 'unskip') {
+    const { k } = exerciseOf(card);
+    const s = ensureSession();
+    if (act === 'skip') s.skip[k] = true; else delete s.skip[k];
+    save(s);
+    refreshCard(card);
+    updateProgress();
+  } else if (act === 'finish' || act === 'reopen') {
+    const s = ensureSession();
+    s.finished = act === 'finish';
+    if (s.finished) { stopRest(); buzz([80, 60, 80]); }
+    save(s);
+    updateProgress();
+    if (s.finished) $('#finish').scrollIntoView({ block: 'center' });
+  } else if (act === 'reset') {
     $('#reset').innerHTML = `<p>Vols esborrar tot el que has marcat en aquesta sessió?</p>
       <div class="row"><button type="button" class="danger" data-act="reset-yes">Sí, reinicia</button>
       <button type="button" class="ghost" data-act="reset-no">Cancel·la</button></div>`;
@@ -715,7 +770,9 @@ function sessionStatus(date, w, today) {
   const s = sessions[keyOf(date, w)];
   if (s) {
     const pct = progressOf(dayById(w), s).pct;
-    return pct === 100 ? { cls: 'done', text: `${ICON_CHECK} Fet` } : { cls: 'partial', text: `${pct}%` };
+    if (pct === 100) return { cls: 'done', text: `${ICON_CHECK} Fet` };
+    if (s.finished) return { cls: 'done', text: `${ICON_CHECK} ${pct}%` };
+    return { cls: 'partial', text: `${pct}%` };
   }
   if (date < today) return { cls: 'missed', text: 'No fet' };
   if (date === today) return { cls: 'today', text: 'Avui' };
@@ -730,6 +787,7 @@ function sessionSummary(s) {
   if (s.warm) items.push({ text: 'Escalfament', done: true });
   day.exercises.forEach((ex, i) => {
     const k = setKey(i, ex);
+    if (exSkipped(ex, i, s)) { items.push({ html: `${esc(ex.name)} · saltat`, skipped: true }); return; }
     const n = countOf(s, i, ex);
     const doneSets = (s.sets?.[k] || []).slice(0, n).filter(Boolean).length;
     const reps = (s.reps?.[k] || []).slice(0, n).filter(hasText);
@@ -745,11 +803,11 @@ function sessionSummary(s) {
   if (s.cardio) items.push({ text: 'Cardio', done: true });
 
   const list = items.length
-    ? `<ul class="cal-log">${items.map((it) => `<li class="${it.done ? 'done' : ''}">${it.done ? ICON_CHECK : '<span class="dot" aria-hidden="true"></span>'}<span>${it.html ?? esc(it.text)}</span></li>`).join('')}</ul>`
+    ? `<ul class="cal-log">${items.map((it) => `<li class="${it.done ? 'done' : it.skipped ? 'skipped' : ''}">${it.done ? ICON_CHECK : it.skipped ? '<span class="dash" aria-hidden="true"></span>' : '<span class="dot" aria-hidden="true"></span>'}<span>${it.html ?? esc(it.text)}</span></li>`).join('')}</ul>`
     : '<p class="cal-log-empty">Encara no hi ha res registrat.</p>';
 
   return `<section class="cal-session">
-    <header><b>${s.day.toUpperCase()} · ${esc(day.title)}</b><span class="tabular${pct === 100 ? ' full' : ''}">${pct}%</span></header>
+    <header><b>${s.day.toUpperCase()} · ${esc(day.title)}</b><span class="tabular${pct === 100 || s.finished ? ' full' : ''}">${s.finished && pct < 100 ? 'Acabada · ' : ''}${pct}%</span></header>
     ${list}
     <button type="button" class="ghost" data-act="cal-session" data-day="${s.day}">Obre la sessió</button>
   </section>`;
@@ -1111,7 +1169,7 @@ function renderHistory(message = '', kind = '') {
     return `<li><button type="button" data-act="open" data-k="${esc(k)}">
       <span class="h-day">${esc(s.day.toUpperCase())} · ${esc(day?.short ?? 'Dia antic')}</span>
       <span class="h-date">${fmtLong(s.date)}</span>
-      <span class="h-pct${pct === 100 ? ' full' : ''}">${pct === null ? '—' : `${pct}%`}</span>
+      <span class="h-pct${pct === 100 || s.finished ? ' full' : ''}">${pct === null ? '—' : `${pct}%`}</span>
     </button></li>`;
   }).join('');
 
@@ -1223,7 +1281,9 @@ function cleanSession(s) {
   for (const [k, a] of Object.entries(s.reps || {})) if (Array.isArray(a)) texts[k] = a.map((v) => (hasText(v) ? String(v).trim() : ''));
   for (const [k, n] of Object.entries(s.count || {})) if (Number.isInteger(n) && n >= 1 && n <= MAX_SETS) counts[k] = n;
   for (const [k, v] of Object.entries(s.kg || {})) if (hasText(v)) kg[k] = String(v).trim();
-  return { date: s.date, day: s.day, warm: !!s.warm, cardio: !!s.cardio, sets: bools, reps: texts, count: counts, kg, updated: String(s.updated || '') };
+  const skip = {};
+  for (const [k, v] of Object.entries(s.skip || {})) if (v) skip[k] = true;
+  return { date: s.date, day: s.day, warm: !!s.warm, cardio: !!s.cardio, sets: bools, reps: texts, count: counts, kg, skip, finished: !!s.finished, updated: String(s.updated || '') };
 }
 
 // Fusiona: les sessions noves s'afegeixen; si ja existeix, guanya la modificada més tard.

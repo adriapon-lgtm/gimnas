@@ -560,6 +560,84 @@
 
   Object.values(DEFS).forEach(prepare);
 
+  // ---------- Segona vista ----------
+  // Vista de davant per als exercicis on ajuda a entendre el moviment (amplada de
+  // l'agafada, colzes oberts o tancats...). La vista principal continua sent la de costat.
+
+  const FS = FRONT_SEATED; // espatlles a y = 44
+  const FRONT_VIEW = { view: [20, -14, 200, 164], floor: 146, front: true, sym: true, feet: false, props: frontSeat };
+  const HANDS = [{ at: 'handN', r: 4, both: true }];
+
+  // Rem vist des de darrere: braços endavant (escurçats) i després els colzes a l'angle indicat.
+  function rowFront(end, s1, s2, s3) {
+    return {
+      ...FRONT_VIEW, marks: HANDS,
+      steps: [
+        { pose: { ...FS, armNt: [130, 46], armNs: [0.4, 0.4] }, move: 0.8, hold: 0.5, say: s1 },
+        { pose: { ...FS, armN: end, armNs: [1, 1] }, move: 1.2, hold: 0.8, say: s2 },
+        { pose: { ...FS, armNt: [130, 46], armNs: [0.4, 0.4] }, move: 1.6, hold: 0.3, say: s3 },
+      ],
+    };
+  }
+
+  // Empènyer vist de davant: les mans van cap a qui mira (es veuen escurçades).
+  function pushFront(start, end, endScale, says) {
+    return {
+      ...FRONT_VIEW, marks: HANDS,
+      steps: [
+        { pose: { ...FS, armN: start, armNs: [1, 1] }, move: 0.8, hold: 0.5, say: says[0] },
+        { pose: { ...FS, armN: end, armNs: endScale }, move: 1.2, hold: 0.5, say: says[1] },
+        { pose: { ...FS, armN: start, armNs: [1, 1] }, move: 1.6, hold: 0.3, say: says[2] },
+      ],
+    };
+  }
+
+  const FRONT_VIEWS = {
+    latpull: {
+      ...FRONT_VIEW, cable: { from: [120, -14], to: 'linkMid' }, link: ['handN', 'handF'], marks: HANDS,
+      steps: [
+        { pose: { ...FS, armNt: [156, 12], armNs: [1, 1] }, move: 0.8, hold: 0.5, say: 'Agafada ampla, braços estirats.' },
+        { pose: { ...FS, armNt: [154, 46], armNs: [1, 1] }, move: 1.2, hold: 0.5, say: 'Baixa la barra fins a la clavícula, amb els colzes avall i enfora.' },
+        { pose: { ...FS, armNt: [156, 12], armNs: [1, 1] }, move: 1.6, hold: 0.3, say: 'Torna controlant.' },
+      ],
+    },
+    facepull: {
+      ...FRONT_VIEW, cable: { from: [120, -14], to: 'linkMid' }, link: ['handN', 'handF'], marks: HANDS,
+      steps: [
+        { pose: { ...FS, armNt: [126, 30], armNs: [0.45, 0.45] }, move: 0.8, hold: 0.5, say: 'Corda a la politja alta, braços estirats endavant.' },
+        { pose: { ...FS, armN: [0, 200], armNs: [1, 1] }, move: 1.2, hold: 0.6, say: 'Estira cap a la cara obrint els colzes; les mans, a l’alçada de les orelles.' },
+        { pose: { ...FS, armNt: [126, 30], armNs: [0.45, 0.45] }, move: 1.6, hold: 0.3, say: 'Torna a poc a poc.' },
+      ],
+    },
+    lowrow: rowFront([75, -100], 'Pit al coixí, braços estirats endavant.', 'Tira amb els colzes enganxats al cos.', 'Torna estirant els braços.'),
+    lowrowwide: rowFront([5, 190], 'Nanses amples, braços estirats.', 'Tira amb els colzes oberts, a l’alçada de les espatlles.', 'Torna a poc a poc.'),
+    psrow: rowFront([25, 200], 'Pit recolzat, braços estirats.', 'Colzes a 45–60° del cos; junta les escàpules al final.', 'Torna a poc a poc.'),
+    chin: {
+      view: [20, -12, 200, 190], front: true, sym: true, feet: false,
+      props: '<line class="a-prop-line" x1="92" y1="2" x2="148" y2="2"/>',
+      marks: HANDS,
+      steps: [
+        { pose: { hip: [120, 100], torso: -90, head: -90, legN: [88, 90], legNs: [1, 0.3], armNt: [136, 4], armNs: [1, 1] }, move: 0.8, hold: 0.6, say: 'Agafada neutra a l’amplada de les espatlles, genolls a la plataforma.' },
+        { pose: { hip: [120, 78], torso: -90, head: -90, legN: [88, 90], legNs: [1, 0.3], armNt: [136, 4], armNs: [1, 1] }, move: 1.4, hold: 0.4, say: 'Puja fins que la barbeta passi les nanses, colzes cap avall.' },
+        { pose: { hip: [120, 100], torso: -90, head: -90, legN: [88, 90], legNs: [1, 0.3], armNt: [136, 4], armNs: [1, 1] }, move: 1.8, hold: 0.3, say: 'Baixa a poc a poc.' },
+      ],
+    },
+    shoulder: pushFront([0, -90], [-80, -88], [1, 1], ['Nanses a l’alçada de les espatlles, colzes sota les mans.', 'Empeny amunt fins a estirar els braços.', 'Baixa a poc a poc.']),
+    chestpress: pushFront([5, 190], [15, 15], [0.5, 0.4], ['Colzes oberts, nanses a l’alçada del pit.', 'Empeny endavant fins a estirar els braços.', 'Torna a poc a poc.']),
+    incline: pushFront([10, 195], [-55, -55], [0.6, 0.5], ['Nanses a l’alçada del pit alt.', 'Empeny amunt i endavant.', 'Torna a poc a poc.']),
+    armcurl: pushFront([85, 85], [85, -95], [1, 1], ['Braços estirats, colzes al coixí.', 'Puja les mans sense moure els colzes.', 'Baixa a poc a poc.']),
+    armext: pushFront([85, 20], [85, 85], [1, 1], ['Colzes al coixí, mans endavant.', 'Estira els braços del tot cap avall.', 'Torna a poc a poc.']),
+  };
+  FRONT_VIEWS.armext.steps[0].pose.armNs = [1, 0.4];
+  FRONT_VIEWS.armext.steps[2].pose.armNs = [1, 0.4];
+
+  Object.values(FRONT_VIEWS).forEach(prepare);
+
+  const viewName = (def) => (def.front ? 'De davant' : 'De costat');
+  const altOf = (id) => FRONT_VIEWS[id] || null;
+  // Definició que toca segons la vista triada a la figura.
+  const defFor = (fig) => (fig.dataset.view === 'alt' && altOf(fig.dataset.anim)) || DEFS[fig.dataset.anim];
+
   function poseAt(def, time) {
     const steps = def.steps;
     let t = time % def.total;
@@ -610,6 +688,14 @@
       }
     });
 
+    if (def.link) {
+      const a = sk.joints[def.link[0]], b = sk.joints[def.link[1]];
+      const line = fig.querySelector('.a-link');
+      line.setAttribute('x1', a[0].toFixed(1)); line.setAttribute('y1', a[1].toFixed(1));
+      line.setAttribute('x2', b[0].toFixed(1)); line.setAttribute('y2', b[1].toFixed(1));
+      sk.joints.linkMid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    }
+
     if (def.cable) {
       const to = sk.joints[def.cable.to];
       const line = fig.querySelector('.a-cable');
@@ -622,10 +708,12 @@
   const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   function mount(fig) {
-    const def = DEFS[fig.dataset.anim];
+    const def = defFor(fig);
     if (!def || fig.dataset.ready) return;
     fig.dataset.ready = '1';
     const [vx, , vw] = def.view;
+    const alt = altOf(fig.dataset.anim);
+    const other = alt ? viewName(fig.dataset.view === 'alt' ? DEFS[fig.dataset.anim] : alt) : '';
     fig.innerHTML = `
       <svg viewBox="${def.view.join(' ')}" class="${def.front ? 'front' : ''}" role="img" aria-label="Animació de l'exercici">
         ${def.floor !== undefined ? `<rect class="a-mat" x="${vx + 6}" y="${def.floor}" width="${vw - 12}" height="4" rx="2"/>` : ''}
@@ -640,18 +728,22 @@
         <circle class="a-head" r="9"/>
         <polyline class="a-limb" data-p="legN"/>
         <polyline class="a-limb" data-p="armN"/>
+        ${def.link ? '<line class="a-link"/>' : ''}
         ${def.marks.map(markSvg).join('')}
       </svg>
       <figcaption>
         <span class="a-say"></span>
-        <button type="button" class="a-toggle" data-act="anim-toggle"></button>
+        <span class="a-btns">
+          ${alt ? `<button type="button" class="a-view" data-act="anim-view" aria-label="Canvia la vista">${other}</button>` : ''}
+          <button type="button" class="a-toggle" data-act="anim-toggle"></button>
+        </span>
       </figcaption>`;
     fig.dataset.time = '0';
     show(fig, 0);
   }
 
   function show(fig, time) {
-    const def = DEFS[fig.dataset.anim];
+    const def = defFor(fig);
     const { pose, step } = poseAt(def, time);
     draw(fig, def, pose);
     const say = fig.querySelector('.a-say');
@@ -697,7 +789,7 @@
     open(fig) {
       mount(fig);
       if (reduceMotion()) {
-        fig.dataset.time = String(keyTime(DEFS[fig.dataset.anim]));
+        fig.dataset.time = String(keyTime(defFor(fig)));
         show(fig, Number(fig.dataset.time));
         setButton(fig, false);
       } else {
@@ -706,11 +798,21 @@
     },
     close: stop,
     toggle(fig) { if (running.has(fig)) stop(fig); else play(fig); },
+    hasAlt: (id) => !!altOf(id),
+    // Canvia entre la vista de costat i la de davant, mantenint l'estat de reproducció.
+    flip(fig) {
+      const wasRunning = running.has(fig);
+      stop(fig);
+      fig.dataset.view = fig.dataset.view === 'alt' ? '' : 'alt';
+      delete fig.dataset.ready;
+      mount(fig);
+      if (wasRunning) play(fig); else this.still(fig);
+    },
     // Mostra la postura clau sense animar (per a proves).
     still(fig, at) {
       stop(fig);
       mount(fig);
-      const def = DEFS[fig.dataset.anim];
+      const def = defFor(fig);
       fig.dataset.time = String(at === undefined ? keyTime(def) : at);
       show(fig, Number(fig.dataset.time));
       setButton(fig, false);
