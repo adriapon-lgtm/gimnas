@@ -118,12 +118,13 @@ const swim = loadJSON(SWIM_KEY);
 const hasText = (v) => v !== null && v !== undefined && String(v).trim() !== '';
 
 // Una sessió de compensació generada es conserva encara que no s'hi hagi marcat res.
+// Els nombres de sèries que només venen de la descàrrega no compten com a contingut.
 function isEmpty(s) {
   return !s.warm && !s.cardio && !s.plan
     && !Object.values(s.sets || {}).some((a) => a.some(Boolean))
     && !Object.values(s.kg || {}).some(hasText)
     && !Object.values(s.reps || {}).some((a) => a.some(hasText))
-    && !Object.keys(s.count || {}).length
+    && !Object.entries(s.count || {}).some(([k, n]) => n !== defaultSets(dayOf(s)?.exercises[Number.parseInt(k)] || { sets: NaN }, s))
     && !Object.keys(s.skip || {}).length
     && !s.finished;
 }
@@ -138,11 +139,15 @@ const state = {
 
 const currentKey = () => keyOf(state.date, state.day);
 const getSession = () => sessions[currentKey()] || null;
+// En canviar de dia o de data, es tanquen les coses a mig fer (motiu de salt, natació, compensació).
+const resetTransient = () => { state.comp = null; state.swimDate = ''; state.skipping = ''; state.skipZone = false; };
 
 function ensureSession() {
   const k = currentKey();
   if (!sessions[k]) {
     sessions[k] = { date: state.date, day: state.day, warm: false, cardio: false, sets: {}, reps: {}, count: {}, kg: {}, updated: '' };
+    // En setmana de descàrrega, el nombre de sèries es desa a la sessió perquè no canviï després.
+    if (isDeloadDate(state.date)) applyDeload(sessions[k]);
   }
   const s = sessions[k];
   s.sets ||= {}; s.reps ||= {}; s.count ||= {}; s.kg ||= {}; s.skip ||= {};
@@ -158,8 +163,27 @@ function save(s) {
 
 // Setmana de descàrrega: la meitat de sèries (arrodonint amunt) amb el mateix pes.
 const isDeloadDate = (date) => !!meta.deloadWeek && mondayOf(date) === meta.deloadWeek;
-const defaultSets = (ex, s) => (isDeloadDate(s?.date || state.date) && !s?.plan ? Math.max(1, Math.ceil(ex.sets / 2)) : ex.sets);
+const halfSets = (ex) => Math.max(1, Math.ceil(ex.sets / 2));
+const defaultSets = (ex, s) => (isDeloadDate(s?.date || state.date) && !s?.plan ? halfSets(ex) : ex.sets);
 const countOf = (s, i, ex) => s?.count?.[setKey(i, ex)] ?? defaultSets(ex, s);
+
+// Desa (o treu) el nombre de sèries de descàrrega a les sessions d'una setmana.
+function applyDeload(s, on = true) {
+  if (s.plan) return;
+  const day = dayById(s.day);
+  if (!day) return;
+  s.count ||= {};
+  day.exercises.forEach((ex, i) => {
+    const k = setKey(i, ex);
+    const half = halfSets(ex);
+    if (on) { if (s.count[k] === undefined && half !== ex.sets) s.count[k] = half; }
+    else if (s.count[k] === half) delete s.count[k];
+  });
+}
+function setDeloadWeek(monday, on) {
+  for (const s of Object.values(sessions)) if (mondayOf(s.date) === monday) applyDeload(s, on);
+  persist();
+}
 
 function exDone(ex, i, s) {
   const n = countOf(s, i, ex);
@@ -370,6 +394,7 @@ function chooseToday() {
   state.date = todayISO();
   state.editing = false;
   state.restNote = '';
+  resetTransient();
 
   const todays = Object.values(sessions).filter((s) => s.date === state.date && dayById(s.day)).sort(byRecent);
   if (todays.length) {
@@ -736,7 +761,7 @@ function swimForm(date) {
 // Desa el formulari de natació del contenidor; torna false si falten els minuts.
 function saveSwim(form) {
   const date = form.dataset.swimDate;
-  const minutes = Number(form.querySelector('[data-swim="minutes"]').value);
+  const minutes = Math.round(Number(form.querySelector('[data-swim="minutes"]').value));
   if (!Number.isInteger(minutes) || minutes <= 0) {
     form.querySelector('[data-swim-msg]').textContent = 'Posa els minuts que has nedat.';
     return false;
@@ -834,6 +859,11 @@ function buildComp(date, { ignoreMissing = false } = {}) {
   const has = (key) => items.some((p) => p.key === key) || core.some((c) => c.key === key);
   const budget = SESSION_MAX - WARMUP_MIN - CARDIO_MIN;
   const minutes = (plan) => strengthMinutes(dayOf({ plan, date }));
+  // Si només amb les pendents ja es passa dels 80 min, es treuen aïllaments (els últims primer).
+  while (items.length && minutes([...items, ...core]) > budget) {
+    const idx = items.map((p, i) => (EX_BY_KEY[p.key]?.compound ? -1 : i)).filter((i) => i >= 0).at(-1) ?? items.length - 1;
+    items.splice(idx, 1);
+  }
   for (const key of COMP_ORDER) {
     if (pain.has(key) || has(key)) continue;
     const def = exDef(key, OPTIONAL);
@@ -858,7 +888,6 @@ function finishComp(plan, date) {
 }
 
 function renderDayFive() {
-  const day = dayById(OPTIONAL);
   const parts = [];
   const head = `<header class="session-head" id="session-head">
     <p class="eyebrow">D5 · ${fmtLong(state.date)}</p><h1>Dia opcional</h1>
@@ -1057,7 +1086,8 @@ function changeCount(card, delta) {
   const { i, ex, k } = exerciseOf(card);
   const s = ensureSession();
   const n = Math.min(MAX_SETS, Math.max(1, countOf(s, i, ex) + delta));
-  if (n === defaultSets(ex, s)) delete s.count[k]; else s.count[k] = n;
+  // En descàrrega es desa sempre, perquè el valor no depengui de quina setmana és la de descàrrega.
+  if (n === ex.sets && !isDeloadDate(s.date)) delete s.count[k]; else s.count[k] = n;
   if (s.sets[k]) s.sets[k] = sized(s.sets[k], n, false);
   if (s.reps[k]) s.reps[k] = sized(s.reps[k], n, '');
   save(s);
@@ -1111,9 +1141,9 @@ trainEl.addEventListener('click', (e) => {
     updateProgress();
   } else if (act === 'deload-yes' || act === 'deload-no' || act === 'deload-undo') {
     const monday = mondayOf(todayISO());
-    if (act === 'deload-yes') { meta.prevDeload = meta.lastDeload || ''; meta.lastDeload = monday; meta.deloadWeek = monday; }
+    if (act === 'deload-yes') { meta.prevDeload = meta.lastDeload || ''; meta.lastDeload = monday; meta.deloadWeek = monday; setDeloadWeek(monday, true); }
     else if (act === 'deload-no') meta.deloadDismissed = monday;
-    else { delete meta.deloadWeek; meta.lastDeload = meta.prevDeload || undefined; if (!meta.lastDeload) delete meta.lastDeload; meta.deloadDismissed = monday; }
+    else { delete meta.deloadWeek; meta.lastDeload = meta.prevDeload || undefined; if (!meta.lastDeload) delete meta.lastDeload; meta.deloadDismissed = monday; setDeloadWeek(monday, false); }
     saveJSON(META_KEY, meta);
     renderTrain();
   } else if (act === 'comp-swim') {
@@ -1229,6 +1259,7 @@ daysEl.addEventListener('click', (e) => {
   if (!btn || btn.dataset.day === state.day) return;
   state.day = btn.dataset.day;
   state.restNote = '';
+  resetTransient();
   renderDays();
   renderTrain();
   window.scrollTo(0, 0);
@@ -1270,7 +1301,7 @@ function sessionStatus(date, w, today) {
     const other = swimInWeek(mondayOf(date))[0];
     if (other) return { cls: 'done', text: `${ICON_CHECK} Natació ${WEEKDAYS[parseISO(other).getDay()]}` };
   }
-  if (date < today) return { cls: 'missed', text: 'No fet' };
+  if (date < today) return w === OPTIONAL ? { cls: '', text: 'Opcional' } : { cls: 'missed', text: 'No fet' };
   if (date === today) return { cls: 'today', text: 'Avui' };
   return { cls: '', text: w === OPTIONAL ? 'Opcional' : '' };
 }
@@ -1488,6 +1519,7 @@ calendarEl.addEventListener('click', (e) => {
     state.day = act === 'cal-session' ? btn.dataset.day : w;
     state.restNote = '';
     state.editing = date !== todayISO();
+    resetTransient();
     showScreen('train');
   } else if (act === 'cal-postpone') {
     postpone(date);
@@ -1800,6 +1832,7 @@ historyEl.addEventListener('click', (e) => {
     state.day = s.day;
     state.restNote = '';
     state.editing = s.date !== todayISO();
+    resetTransient();
     showScreen('train');
   }
 });

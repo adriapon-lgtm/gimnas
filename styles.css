@@ -1108,7 +1108,7 @@ dialog .ghost { width: 100%; background: var(--surface-2); box-shadow: none; }
 .warn-text { margin: 8px 0 0; padding: 10px 12px; border-radius: var(--radius-s); background: var(--warn-bg); color: var(--warn-ink); font-size: 14px; font-weight: 600; }
 
 .banner.deload { flex-wrap: wrap; }
-.banner .row { display: flex; gap: 8px; }
+.banner > .row { flex: none; display: flex; gap: 8px; }
 .btn.small, .ghost.small { min-height: 40px; padding: 0 14px; border-radius: 12px; }
 
 /* ---------- Dia 5: natació o compensació ---------- */
