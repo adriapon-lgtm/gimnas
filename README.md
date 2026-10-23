@@ -37,7 +37,7 @@ La navegació és a la barra de baix: Entrenar, Calendari, Progrés i Historial.
 
 ## Fer canvis
 
-Després de modificar qualsevol fitxer, puja el número de `VERSION` a `sw.js` (per exemple `v3` → `v4`). Si no, el mòbil continuarà fent servir la versió desada. El canvi s'aplica la segona vegada que obris l'app.
+Després de modificar qualsevol fitxer, puja el número de `VERSION` a `sw.js` (per exemple `v3` → `v4`). Si no, el mòbil continuarà fent servir la versió desada. En obrir l'app, descarrega la versió nova i mostra un avís amb el botó «Actualitza».
 
 ## Còpies de seguretat
 

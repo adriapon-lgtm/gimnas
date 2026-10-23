@@ -1361,6 +1361,27 @@ renderAll();
 
 navigator.storage?.persist?.().catch(() => {});
 
+// Quan s'activa una versió nova de l'app, avisa i ofereix recarregar.
+function showUpdateToast() {
+  if ($('#update-toast')) return;
+  const el = document.createElement('div');
+  el.id = 'update-toast';
+  el.className = 'toast';
+  el.setAttribute('role', 'status');
+  el.innerHTML = '<span>Hi ha una versió nova de l’app.</span><button type="button">Actualitza</button>';
+  el.querySelector('button').addEventListener('click', () => location.reload());
+  document.body.append(el);
+}
+
 if ('serviceWorker' in navigator) {
+  let hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hadController) showUpdateToast();
+    hadController = true;
+  });
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  // Cada vegada que tornes a l'app, comprova si hi ha una versió nova.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') navigator.serviceWorker.getRegistration().then((r) => r?.update()).catch(() => {});
+  });
 }
