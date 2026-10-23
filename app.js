@@ -503,7 +503,7 @@ function updateProgress() {
   const C = 2 * Math.PI * 30; // perímetre del cercle de l'anell
   $('#progress-fill').style.strokeDasharray = C;
   $('#progress-fill').style.strokeDashoffset = C * (1 - pct / 100);
-  $('#session-head').classList.toggle('complete', finished || done === total);
+  $('#session-head').classList.toggle('is-complete', finished || done === total);
   const fin = $('#finish');
   if (fin) fin.innerHTML = finishBlock(s);
   renderMusclesToday();

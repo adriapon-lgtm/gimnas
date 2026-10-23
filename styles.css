@@ -256,13 +256,13 @@ h1, h2, h3 { letter-spacing: -0.01em; }
 .progress-text { margin: 10px 0 0; font-size: 14px; opacity: 0.92; grid-column: 1 / -1; }
 .progress-text b { font-weight: 800; }
 
-.session-head.complete {
+.session-head.is-complete {
   background: linear-gradient(135deg, var(--done) 0%, var(--done-2) 100%);
   color: var(--done-ink);
   box-shadow: 0 10px 28px color-mix(in srgb, var(--done) 35%, transparent);
 }
-.session-head.complete .ring .track { stroke: color-mix(in srgb, var(--done-ink) 28%, transparent); }
-.session-head.complete .ring .fill { stroke: var(--done-ink); }
+.session-head.is-complete .ring .track { stroke: color-mix(in srgb, var(--done-ink) 28%, transparent); }
+.session-head.is-complete .ring .fill { stroke: var(--done-ink); }
 
 /* ---------- Elements de marcar (escalfament i cardio) ---------- */
 
