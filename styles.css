@@ -1186,3 +1186,9 @@ dialog .ghost { width: 100%; background: var(--surface-2); box-shadow: none; }
 .wr-line { margin: 12px 0 0; font-size: 14px; }
 .wr-pains li { padding: 6px 0; font-size: 14px; border-bottom: 1px solid var(--line); }
 .wr-pains em { color: var(--muted); }
+
+/* ---------- Recuperar la setmana ---------- */
+
+.cal-catchup { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; border-radius: var(--radius-s); background: var(--accent-soft); }
+.cal-catchup p { margin: 0; font-size: 14px; }
+.cal-catchup small { color: var(--muted); font-size: 12px; line-height: 1.35; }

@@ -372,6 +372,39 @@ function postpone(date) {
   persistSchedule();
 }
 
+// Entrenaments principals de la setmana de `date` sense sessió, en l'ordre original
+// (els perduts i els que encara no toquen).
+function weekPending(date) {
+  return weekDays(mondayOf(date)).map((d) => ({ date: d, id: planned(d) }))
+    .filter((x) => dayById(x.id) && x.id !== OPTIONAL && !sessions[keyOf(x.date, x.id)]);
+}
+// Hi ha entrenaments perduts abans de `date` que es poden recuperar a partir d'aquell dia.
+const canCatchUp = (date, today) => date >= today && weekPending(date).some((x) => x.date < date);
+
+// Posa un entrenament en una data i empeny els que hi havia un dia endavant fins que un dia
+// de descans (o l'opcional) els absorbeix. Mateixa lògica que aplaçar.
+function insertAt(date, id) {
+  let carry = id;
+  let d = date;
+  for (let i = 0; i < 14; i++) {
+    const cur = planned(d);
+    setPlanned(d, carry);
+    if (cur === 'rest' || cur === OPTIONAL) break;
+    carry = cur;
+    d = addDays(d, 1);
+  }
+}
+
+// Recupera la setmana: els entrenaments no fets passen, en ordre i un per dia, a partir de `from`.
+function catchUp(from) {
+  const pending = weekPending(from);
+  for (const m of pending) setPlanned(m.date, 'rest');
+  const placed = pending.map((m, i) => ({ id: m.id, date: addDays(from, i) }));
+  for (const p of placed) insertAt(p.date, p.id);
+  persistSchedule();
+  return placed;
+}
+
 // Mou a una altra data: s'intercanvia amb el que hi hagués aquell dia.
 function moveTo(date, target) {
   const a = planned(date), b = planned(target);
@@ -1359,6 +1392,12 @@ function calActions(date, w, today) {
     acts.push('<button type="button" class="ghost" data-act="swim-edit">He anat a nedar</button>');
   }
   if (date >= today) {
+    if (canCatchUp(date, today)) {
+      const ids = weekPending(date).map((x) => x.id.toUpperCase()).join(', ');
+      acts.push(`<div class="cal-catchup"><p>Aquesta setmana queden per fer: <b>${ids}</b>.</p>
+        <button type="button" class="btn" data-act="cal-catchup">Fes-los seguits a partir d'aquí</button>
+        <small>Un per dia, començant per aquest. Els entrenaments que hi havia es mouen un dia fins al pròxim descans.</small></div>`);
+    }
     if (isWorkout) {
       acts.push('<button type="button" class="ghost" data-act="cal-postpone">Aplaza un dia</button>');
       acts.push(`<div class="cal-move"><label>Mou a <input type="date" min="${today}" value="${addDays(date, 1)}"></label>
@@ -1521,6 +1560,10 @@ calendarEl.addEventListener('click', (e) => {
     state.editing = date !== todayISO();
     resetTransient();
     showScreen('train');
+  } else if (act === 'cal-catchup') {
+    const placed = catchUp(date);
+    state.calOpen = '';
+    renderCalendar(`${sentence(placed.map((p) => `${p.id.toUpperCase()} ${fmtDay(p.date)}`).join(', '))} Els entrenaments que hi havia s'han mogut un dia fins al pròxim descans.`, 'ok');
   } else if (act === 'cal-postpone') {
     postpone(date);
     state.calOpen = '';
