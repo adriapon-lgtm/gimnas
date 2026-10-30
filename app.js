@@ -264,6 +264,31 @@ function historyFor(exKey, sameDay = false, n = 1) {
 }
 const lastFor = (exKey, sameDay = false) => historyFor(exKey, sameDay)[0] || null;
 
+const median = (arr) => {
+  const a = arr.slice().sort((x, y) => x - y);
+  if (!a.length) return NaN;
+  const m = a.length >> 1;
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+};
+
+// El que fas habitualment: mediana del pes i de les repeticions de les últimes sessions (fins a 6).
+function typicalFor(exKey, n = 6) {
+  const hist = historyFor(exKey, false, n);
+  if (hist.length < 2) return null;
+  const kgs = hist.map((h) => parseKg(h.kg)).filter(Number.isFinite);
+  const reps = hist.flatMap((h) => h.reps.map(Number)).filter((r) => r > 0);
+  if (!kgs.length && !reps.length) return null;
+  return { kg: median(kgs), reps: median(reps), sessions: hist.length };
+}
+
+function typicalText(t, ex) {
+  if (!t) return '';
+  const bits = [];
+  if (Number.isFinite(t.kg)) bits.push(`<b class="tabular">${fmtKg(t.kg)} kg</b>`);
+  if (Number.isFinite(t.reps)) bits.push(`<span class="tabular">${fmtKg(t.reps)} ${isTimed(ex) ? 's' : 'rep.'}</span>`);
+  return `Habitual: ${bits.join(' · ')} <small>(mediana de ${t.sessions} sessions)</small>`;
+}
+
 // Pas de pes de l'exercici (cada màquina té el seu); 2,5 kg si no s'ha canviat.
 function stepOf(ex) {
   const v = parseKg(steps[ex.key]);
@@ -585,6 +610,7 @@ function exerciseInner(ex, i, s) {
     <p class="sets-label">${unit} de cada sèrie</p>
     ${kg}
     <p class="last">${lastText(last, ex)}</p>
+    ${(() => { const t = typicalText(typicalFor(ex.key), ex); return t ? `<p class="last typical">${t}</p>` : ''; })()}
     ${tipHtml}
     ${settings}
     <div class="ex-ctrl">
@@ -1391,6 +1417,15 @@ function calActions(date, w, today) {
   if (date <= today && !swim[date] && state.swimDate !== date) {
     acts.push('<button type="button" class="ghost" data-act="swim-edit">He anat a nedar</button>');
   }
+  // Entrenament perdut (dia passat sense sessió): moure'l a un dia concret o cancel·lar-lo.
+  if (isWorkout && date < today && !sessions[keyOf(date, w)]) {
+    acts.push(`<div class="cal-move"><label>Mou a <input type="date" min="${today}" value="${today}"></label>
+      <button type="button" class="ghost" data-act="cal-move">Mou</button></div>`);
+    acts.push('<button type="button" class="ghost danger-text" data-act="cal-skip">Cancel·la’l</button>');
+  }
+  if (date < today && schedule[date] !== undefined) {
+    acts.push('<button type="button" class="link" data-act="cal-restore">Torna al pla original</button>');
+  }
   if (date >= today) {
     if (canCatchUp(date, today)) {
       const ids = weekPending(date).map((x) => x.id.toUpperCase()).join(', ');
@@ -1575,15 +1610,23 @@ calendarEl.addEventListener('click', (e) => {
       return;
     }
     const other = planned(target);
-    moveTo(date, target);
     state.calOpen = '';
     state.week = mondayOf(target);
+    if (date < todayISO()) {
+      // Un entrenament perdut no s'intercanvia: s'insereix al dia triat i el que hi havia s'aplaça.
+      setPlanned(date, 'rest');
+      insertAt(target, w);
+      persistSchedule();
+      renderCalendar(`${sentence(`${w.toUpperCase()} mogut al ${fmtDay(target)}`)}${dayById(other) && other !== OPTIONAL ? ` ${other.toUpperCase()} i els següents es mouen un dia fins al pròxim descans.` : ''}`, 'ok');
+      return;
+    }
+    moveTo(date, target);
     renderCalendar(sentence(`${w.toUpperCase()} mogut al ${fmtDay(target)}${dayById(other) ? `; ${other.toUpperCase()} passa al ${fmtDay(date)}` : ''}`), 'ok');
   } else if (act === 'cal-skip') {
     setPlanned(date, 'rest');
     persistSchedule();
     state.calOpen = '';
-    renderCalendar(`${w.toUpperCase()} del ${fmtDay(date)}: saltat.`, 'ok');
+    renderCalendar(`${w.toUpperCase()} del ${fmtDay(date)}: ${date < todayISO() ? 'cancel·lat' : 'saltat'}.`, 'ok');
   } else if (act === 'cal-add') {
     setPlanned(date, btn.dataset.day);
     persistSchedule();
@@ -1768,6 +1811,7 @@ function renderStats() {
       <div class="facts">
         <span>${ex.weight === 'assist' ? 'Mínim' : 'Màxim'}: <b>${fmtKg(best.kg)} kg</b> (${fmtShort(best.date)})</span>
         ${series.length > 1 ? `<span>Des del ${fmtShort(first.date)}: <b>${change > 0 ? '+' : ''}${fmtKg(change)} kg</b></span>` : '<span>Amb dues sessions o més, veuràs la línia.</span>'}
+        ${(() => { const t = typicalFor(ex.key); return t ? `<span>${typicalText(t, ex)}</span>` : ''; })()}
       </div>
       <table class="ptable">
         <thead><tr><th>Data</th><th>Pes</th><th>Repeticions</th></tr></thead>

@@ -1192,3 +1192,4 @@ dialog .ghost { width: 100%; background: var(--surface-2); box-shadow: none; }
 .cal-catchup { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; border-radius: var(--radius-s); background: var(--accent-soft); }
 .cal-catchup p { margin: 0; font-size: 14px; }
 .cal-catchup small { color: var(--muted); font-size: 12px; line-height: 1.35; }
+.last.typical small { color: var(--muted); font-weight: 400; }
