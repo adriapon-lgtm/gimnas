@@ -1193,3 +1193,45 @@ dialog .ghost { width: 100%; background: var(--surface-2); box-shadow: none; }
 .cal-catchup p { margin: 0; font-size: 14px; }
 .cal-catchup small { color: var(--muted); font-size: 12px; line-height: 1.35; }
 .last.typical small { color: var(--muted); font-weight: 400; }
+
+/* ---------- Substitut per màquina ocupada ---------- */
+
+.sub-tag { margin: 6px 0 0; font-size: 13px; color: var(--muted); line-height: 1.35; }
+.sub-tag b { color: var(--text); font-weight: 700; }
+.sub-tag span { color: var(--accent); font-weight: 800; margin-right: 2px; }
+.sub-tag .link { min-height: 32px; margin-left: 4px; padding: 0 8px; box-shadow: none; background: var(--surface-2); color: var(--accent); font-weight: 700; font-size: 13px; }
+.sub-opts { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.sub-btn {
+  width: 100%;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sub-btn b { font-size: 15px; }
+.sub-btn small { color: var(--muted); font-size: 13px; }
+.skip-panel .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.skip-panel .row .ghost { flex: 1 1 auto; }
+
+/* ---------- Setmana amb canvis ---------- */
+
+.cal-restore-week {
+  margin: 8px 0 0;
+  padding: 8px 8px 8px 14px;
+  border-radius: var(--radius-s);
+  background: var(--warn-bg);
+  color: var(--warn-ink);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 14px;
+  line-height: 1.3;
+}
+.cal-restore-week .ghost { flex: none; box-shadow: none; }
+.cal-warn { margin: 8px 0 0; padding: 10px 14px; border-radius: var(--radius-s); background: var(--warn-bg); color: var(--warn-ink); font-size: 14px; line-height: 1.35; font-weight: 600; }
+.cal-restore-week { background: var(--accent-soft); color: var(--text); }

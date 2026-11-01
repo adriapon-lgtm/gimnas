@@ -19,6 +19,9 @@ const SWIM_NOTE = 'Amb la lumbar, millor crol i esquena. La papallona i la braç
 const COMP_ORDER = ['facepull', 'lowrowwide', 'reardelt', 'straightarm', 'incline', 'armcurl', 'armext', 'calf'];
 const CORE_BLOCK = [{ key: 'sideplank', sets: 2 }, { key: 'deadbug', sets: 2 }];
 const HEAVY_LEGS = ['legpress', 'legpresshigh', 'hipthrust', 'hyperiso', 'hyper'];
+const NO_SUB = ['hyperiso', 'hyper']; // mai com a substitut: necessita el vistiplau del fisio
+// Substituts preferits quan el moviment és el mateix encara que els músculs puntuïn igual.
+const SUB_PREFER = { latpull: ['chin'], chin: ['latpull'], straightarm: ['latpull', 'chin'] };
 const SESSION_MAX = 80; // minuts
 const CARDIO_MIN = 20, CARDIO_MAX = 30;
 const MONTHS = ['gen.', 'febr.', 'març', 'abr.', 'maig', 'juny', 'jul.', 'ag.', 'set.', 'oct.', 'nov.', 'des.'];
@@ -126,6 +129,7 @@ function isEmpty(s) {
     && !Object.values(s.reps || {}).some((a) => a.some(hasText))
     && !Object.entries(s.count || {}).some(([k, n]) => n !== defaultSets(dayOf(s)?.exercises[Number.parseInt(k)] || { sets: NaN }, s))
     && !Object.keys(s.skip || {}).length
+    && !Object.keys(s.subs || {}).length
     && !s.finished;
 }
 
@@ -133,6 +137,7 @@ const state = {
   screen: 'train', date: todayISO(), day: 'd1', editing: false, restNote: '', week: mondayOf(todayISO()), calOpen: '', progEx: '',
   skipping: '', // clau de la targeta on s'està triant el motiu per saltar
   skipZone: false, // s'ha triat «molèstia» i falta la zona
+  skipSub: false, // s'ha triat «màquina ocupada» i es mostren els substituts
   swimDate: '', // data del formulari de natació obert
   comp: null, // proposta de sessió de compensació en edició (encara no desada)
 };
@@ -140,7 +145,7 @@ const state = {
 const currentKey = () => keyOf(state.date, state.day);
 const getSession = () => sessions[currentKey()] || null;
 // En canviar de dia o de data, es tanquen les coses a mig fer (motiu de salt, natació, compensació).
-const resetTransient = () => { state.comp = null; state.swimDate = ''; state.skipping = ''; state.skipZone = false; };
+const resetTransient = () => { state.comp = null; state.swimDate = ''; state.skipping = ''; state.skipZone = false; state.skipSub = false; };
 
 function ensureSession() {
   const k = currentKey();
@@ -150,7 +155,7 @@ function ensureSession() {
     if (isDeloadDate(state.date)) applyDeload(sessions[k]);
   }
   const s = sessions[k];
-  s.sets ||= {}; s.reps ||= {}; s.count ||= {}; s.kg ||= {}; s.skip ||= {};
+  s.sets ||= {}; s.reps ||= {}; s.count ||= {}; s.kg ||= {}; s.skip ||= {}; s.subs ||= {};
   return s;
 }
 
@@ -218,7 +223,19 @@ function setsOfSession(s) {
 // Dia d'una sessió: el del pla o, si és de compensació, el que es va generar (s.plan).
 function dayOf(s) {
   if (!s) return null;
-  if (!s.plan) return dayById(s.day) || null;
+  if (!s.plan) {
+    const base = dayById(s.day);
+    if (!base || !s.subs || !Object.keys(s.subs).length) return base || null;
+    // Substituts d'aquesta sessió (màquina ocupada): mateixes sèries, l'altre exercici.
+    const exercises = base.exercises.map((ex, i) => {
+      const alt = EX_BY_KEY[s.subs[setKey(i, ex)]];
+      if (!alt) return ex;
+      const out = { ...alt, sets: ex.sets, subFor: ex.name, subOf: ex.key };
+      delete out.pair;
+      return out;
+    });
+    return { ...base, exercises };
+  }
   const exercises = s.plan.map((p) => {
     const def = exDef(p.key, p.from);
     if (!def) return null;
@@ -234,6 +251,39 @@ function dayOf(s) {
   return { id: 'd5', kind: 'upper', short: 'Compensació', title: 'Sessió de compensació', focus: 'Del que ha faltat aquesta setmana', cardio: `${s.cardioMin || CARDIO_MIN} min en zona 2 (bicicleta, el·líptica o escaladora)`, exercises, comp: true };
 }
 const currentDay = () => dayOf(getSession()) || dayById(state.day);
+
+// Substituts quan la màquina està ocupada: exercicis del pla que treballen algun dels mateixos
+// músculs principals, que no siguin ja a la sessió d'avui ni s'hagin saltat per molèstia aquesta
+// setmana. Primer els que s'hi assemblen més (mateixos principals, després secundaris).
+function substitutesFor(ex, day, date) {
+  const m = window.PLAN.muscles?.[ex.key];
+  if (!m) return [];
+  const used = new Set(day.exercises.map((x) => x.key));
+  const pain = new Set();
+  for (const w of Object.values(sessions)) {
+    if (mondayOf(w.date) !== mondayOf(date)) continue;
+    for (const [k, v] of Object.entries(w.skip || {})) if (skipInfo(v)?.reason === 'pain') pain.add(k.split(':')[1]);
+  }
+  const common = (a, b) => a.filter((x) => b.includes(x)).length;
+  return Object.values(EX_BY_KEY)
+    .filter((alt) => alt.key !== ex.key && !used.has(alt.key) && !pain.has(alt.key)
+      // La mateixa màquina (mateixa foto) no serveix si està ocupada.
+      && !(ex.photo && alt.photo === ex.photo)
+      // Màquina per màquina i terra per terra; la hiperextensió mai (fisio).
+      && !!alt.weight === !!ex.weight && !NO_SUB.includes(alt.key))
+    .map((alt) => {
+      const am = window.PLAN.muscles?.[alt.key];
+      if (!am || !common(m.main, am.main)) return null;
+      // Mateix moviment (tracció vertical, etc.) primer, quan n'hi ha.
+      const score = common(m.main, am.main) * 4 + common(m.aux, am.main) + common(m.main, am.aux) - Math.abs(am.main.length - m.main.length)
+        + ((SUB_PREFER[ex.key] || []).includes(alt.key) ? 3 : 0);
+      return { alt, score };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 4)
+    .map((x) => x.alt);
+}
 
 // Els exercicis saltats no compten al total: es pot completar el dia sense fer-los.
 function progressOf(day, s) {
@@ -420,14 +470,67 @@ function insertAt(date, id) {
   }
 }
 
-// Recupera la setmana: els entrenaments no fets passen, en ordre i un per dia, a partir de `from`.
+// Recupera la setmana: els entrenaments no fets passen, en ordre i un per dia, a partir de `from`,
+// sense sortir mai de la setmana (la següent no es toca). Els dies amb sessió feta es respecten.
+// Els que no hi caben tornen: els perduts queden com a «No fet» al seu dia per moure'ls un a un.
 function catchUp(from) {
+  const sunday = addDays(mondayOf(from), 6);
+  const hasSession = (d) => Object.values(sessions).some((s) => s.date === d && dayOf(s) && !isEmpty(s));
+  const slots = [];
+  for (let d = from; d <= sunday; d = addDays(d, 1)) if (!hasSession(d)) slots.push(d);
   const pending = weekPending(from);
-  for (const m of pending) setPlanned(m.date, 'rest');
-  const placed = pending.map((m, i) => ({ id: m.id, date: addDays(from, i) }));
-  for (const p of placed) insertAt(p.date, p.id);
+  const placed = pending.slice(0, slots.length).map((m, i) => ({ id: m.id, date: slots[i], from: m.date }));
+  const left = pending.slice(slots.length);
+  // Els no col·locats que eren dins la finestra es perden (el seu dia passa a ser un altre entrenament).
+  const lost = left.filter((m) => slots.includes(m.date));
+  for (const m of placed) setPlanned(m.from, 'rest');
+  for (const p of placed) setPlanned(p.date, p.id);
   persistSchedule();
-  return placed;
+  return { placed, left: left.filter((m) => !lost.includes(m)), lost };
+}
+
+// Avisos de la setmana (només pel que encara no ha passat): massa dies seguits sense descans
+// o un mateix entrenament repetit.
+const MAX_IN_A_ROW = 4;
+function weekWarnings(monday, today) {
+  // Els dies passats compten si s'hi va entrenar; els que vénen, si hi ha un entrenament principal planificat.
+  const done = (d) => !!swim[d] || Object.values(sessions).some((s) => s.date === d && dayOf(s) && !isEmpty(s));
+  const isTraining = (d) => (d < today ? done(d) : done(d) || (!!dayById(planned(d)) && planned(d) !== OPTIONAL));
+  const out = [];
+  // Ratxes que toquen aquesta setmana (comptant els dies d'abans per si ve d'una ratxa anterior).
+  let run = [];
+  const runs = [];
+  for (let d = addDays(monday, -6); d <= addDays(monday, 6); d = addDays(d, 1)) {
+    if (isTraining(d)) run.push(d);
+    else { if (run.length) runs.push(run); run = []; }
+  }
+  if (run.length) runs.push(run);
+  for (const r of runs) {
+    if (r.length > MAX_IN_A_ROW && r.at(-1) >= monday && r.at(-1) >= today) {
+      out.push(`${r.length} dies seguits d’entrenament (${fmtDay(r[0])} – ${fmtDay(r.at(-1))}). Posa-hi un descans: toca un d’aquests dies i fes «Aplaza un dia», o salta’n un.`);
+    }
+  }
+  const seen = {};
+  for (const d of weekDays(monday)) {
+    const id = planned(d);
+    if (!dayById(id) || id === OPTIONAL) continue;
+    (seen[id] ||= []).push(d);
+  }
+  for (const [id, dates] of Object.entries(seen)) {
+    if (dates.length > 1 && dates.at(-1) >= today) {
+      out.push(`${id.toUpperCase()} surt ${dates.length} vegades (${dates.map(fmtDay).join(' i ')}). Si el primer ja és el de recuperar, salta l’altre.`);
+    }
+  }
+  return out;
+}
+
+// Torna al pla original tots els dies de la setmana a partir d'avui.
+const weekOverrides = (monday, today) => weekDays(monday).filter((d) => d >= today && schedule[d] !== undefined);
+function restoreWeek(monday, today) {
+  const days = weekOverrides(monday, today);
+  for (const d of days) delete schedule[d];
+  persistSchedule();
+  return days.length;
 }
 
 // Mou a una altra data: s'intercanvia amb el que hi hagués aquell dia.
@@ -546,6 +649,7 @@ function exerciseInner(ex, i, s) {
         <p class="machine">${esc(ex.machine)}</p>
         <p class="target tabular">${ex.sets} × ${esc(ex.reps)}${fromTag}</p>
         ${pair ? `<p class="pair-tag"><span aria-hidden="true">⇄</span> Supersèrie amb <b>${esc(pair.name)}</b> · ${restOf(ex, i)} s de descans</p>` : ''}
+        ${ex.subFor ? `<p class="sub-tag"><span aria-hidden="true">↺</span> En lloc de <b>${esc(ex.subFor)}</b> (màquina ocupada) <button type="button" class="link" data-act="unsub">Desfés</button></p>` : ''}
       </div>
       <span class="tick" aria-label="Completat">${ICON_CHECK}</span>
     </div>`;
@@ -557,6 +661,18 @@ function exerciseInner(ex, i, s) {
       <button type="button" class="ghost" data-act="unskip">Desfés</button></div>
       ${pain ? `<div class="skip-note"><input data-skipnote="${esc(k)}" type="text" autocomplete="off" enterkeyhint="done" value="${esc(info.note || '')}" placeholder="Nota (opcional): què has notat"></div>` : ''}
       ${pain && info.zone === 'lumbar' ? `<p class="warn-text">${esc(LUMBAR_MSG)}</p>` : ''}`;
+  }
+
+  if (state.skipping === k && state.skipSub) {
+    const alts = substitutesFor(ex, day, s?.date || state.date);
+    const list = alts.length
+      ? `<div class="sub-opts">${alts.map((alt) => `<button type="button" class="sub-btn" data-act="skip-sub" data-key="${esc(alt.key)}">
+          <b>${esc(alt.name)}</b><small>${esc(alt.machine)} · ${esc(muscleNames(window.PLAN.muscles[alt.key].main))}</small></button>`).join('')}</div>`
+      : '<p class="hint">No hi ha cap exercici del pla que treballi el mateix i no facis ja avui.</p>';
+    return `${top}<div class="skip-panel"><p>Màquina ocupada. Fes un d’aquests en lloc seu (mateixes sèries):</p>
+      ${list}
+      <div class="row"><button type="button" class="ghost" data-act="skip-only">Només salta’l</button>
+      <button type="button" class="ghost" data-act="skip-cancel">Cancel·la</button></div></div>`;
   }
 
   if (state.skipping === k) {
@@ -1182,19 +1298,47 @@ trainEl.addEventListener('click', (e) => {
   else if (act === 'skip') {
     state.skipping = exerciseOf(card).k;
     state.skipZone = false;
+    state.skipSub = false;
     refreshCard(card);
   } else if (act === 'skip-cancel') {
     state.skipping = '';
+    state.skipSub = false;
     refreshCard(card);
   } else if (act === 'skip-reason' && btn.dataset.reason === 'pain') {
     state.skipZone = true;
     refreshCard(card);
-  } else if (act === 'skip-reason' || act === 'skip-zone' || act === 'unskip') {
+  } else if (act === 'skip-reason' && btn.dataset.reason === 'busy' && !currentDay().comp) {
+    // Màquina ocupada: abans de saltar-lo, proposa un substitut (a la compensació només es salta).
+    state.skipSub = true;
+    refreshCard(card);
+  } else if (act === 'skip-sub') {
+    const { i, k } = exerciseOf(card);
+    const s = ensureSession();
+    s.subs[k] = btn.dataset.key;
+    state.skipping = '';
+    state.skipSub = false;
+    save(s);
+    // Tot el dia, perquè la parella de supersèrie també canvia.
+    renderTrain();
+    trainEl.querySelector(`.ex[data-i="${i}"]`)?.scrollIntoView({ block: 'center' });
+  } else if (act === 'unsub') {
+    const { i, ex, k } = exerciseOf(card);
+    const s = ensureSession();
+    // Es treu el que s'havia apuntat al substitut i es torna a l'exercici del pla.
+    for (const field of ['sets', 'reps', 'count', 'skip']) delete s[field][k];
+    delete s.kg[ex.key];
+    delete s.subs[`${i}:${ex.subOf}`];
+    save(s);
+    renderTrain();
+    trainEl.querySelector(`.ex[data-i="${i}"]`)?.scrollIntoView({ block: 'center' });
+  } else if (act === 'skip-reason' || act === 'skip-zone' || act === 'unskip' || act === 'skip-only') {
     const { k } = exerciseOf(card);
     const s = ensureSession();
     if (act === 'unskip') delete s.skip[k];
+    else if (act === 'skip-only') s.skip[k] = { reason: 'busy' };
     else s.skip[k] = act === 'skip-zone' ? { reason: 'pain', zone: btn.dataset.zone } : { reason: btn.dataset.reason };
     state.skipping = '';
+    state.skipSub = false;
     save(s);
     refreshCard(card);
     updateProgress();
@@ -1380,7 +1524,7 @@ function sessionSummary(s) {
     const kg = ex.weight ? String(s.kg?.[ex.key] ?? '').trim() : '';
     if (!doneSets && !reps.length && !kg) return;
     const done = exDone(ex, i, s);
-    const bits = [esc(ex.name)];
+    const bits = [ex.subFor ? `${esc(ex.name)} <small>(en lloc de ${esc(ex.subFor)})</small>` : esc(ex.name)];
     if (kg) bits.push(`<b class="tabular">${esc(kg)} kg</b>`);
     if (reps.length) bits.push(`<span class="tabular">${esc(reps.join('/'))}${isTimed(ex) ? ' s' : ''}</span>`);
     if (!done || !reps.length) bits.push(`<span class="tabular">${doneSets}/${n} sèries</span>`);
@@ -1431,7 +1575,7 @@ function calActions(date, w, today) {
       const ids = weekPending(date).map((x) => x.id.toUpperCase()).join(', ');
       acts.push(`<div class="cal-catchup"><p>Aquesta setmana queden per fer: <b>${ids}</b>.</p>
         <button type="button" class="btn" data-act="cal-catchup">Fes-los seguits a partir d'aquí</button>
-        <small>Un per dia, començant per aquest. Els entrenaments que hi havia es mouen un dia fins al pròxim descans.</small></div>`);
+        <small>Un per dia, començant per aquest i fins diumenge. Els que no hi càpiguen els pots moure o cancel·lar un a un. La setmana que ve no es toca.</small></div>`);
     }
     if (isWorkout) {
       acts.push('<button type="button" class="ghost" data-act="cal-postpone">Aplaza un dia</button>');
@@ -1494,6 +1638,9 @@ function renderCalendar(message = '', kind = '') {
       <button type="button" class="ghost" data-act="cal-next" aria-label="Setmana següent">›</button>
     </div>
     <p class="cal-sum">${wk.done} de ${wk.planned} entrenaments fets${optPlanned || wk.optional ? ` · opcional: ${wk.optional ? 'fet' : 'pendent'}` : ''}</p>
+    ${weekWarnings(state.week, today).map((w) => `<p class="cal-warn">${esc(w)}</p>`).join('')}
+    ${weekOverrides(state.week, today).length ? `<div class="cal-restore-week"><span>Aquesta setmana té dies canviats respecte al pla.</span>
+      <button type="button" class="ghost small" data-act="cal-restore-week">Torna-la al pla original</button></div>` : ''}
     <p class="status ${kind}" role="status">${message}</p>
     <ul class="cal">${rows}</ul>
     <p class="hist-intro">Toca un dia per entrenar, aplaçar-lo, moure'l o apuntar-hi natació.</p>
@@ -1596,9 +1743,17 @@ calendarEl.addEventListener('click', (e) => {
     resetTransient();
     showScreen('train');
   } else if (act === 'cal-catchup') {
-    const placed = catchUp(date);
+    const { placed, left, lost } = catchUp(date);
     state.calOpen = '';
-    renderCalendar(`${sentence(placed.map((p) => `${p.id.toUpperCase()} ${fmtDay(p.date)}`).join(', '))} Els entrenaments que hi havia s'han mogut un dia fins al pròxim descans.`, 'ok');
+    const ids = (list) => list.map((m) => m.id.toUpperCase()).join(', ');
+    let msg = sentence(placed.map((p) => `${p.id.toUpperCase()} ${fmtDay(p.date)}`).join(', '));
+    if (left.length) msg += ` No hi caben ${ids(left)}: queden com a no fets al seu dia, els pots moure o cancel·lar un a un.`;
+    if (lost.length) msg += ` ${ids(lost)} no hi cap aquesta setmana.`;
+    renderCalendar(`${msg} La setmana que ve no es toca.`, 'ok');
+  } else if (act === 'cal-restore-week') {
+    const n = restoreWeek(state.week, todayISO());
+    state.calOpen = '';
+    renderCalendar(n ? 'Setmana tornada al pla original a partir d’avui.' : 'Aquesta setmana ja segueix el pla original.', 'ok');
   } else if (act === 'cal-postpone') {
     postpone(date);
     state.calOpen = '';
@@ -2012,6 +2167,10 @@ function cleanSession(s) {
     if (plan.length) { out.plan = plan; out.cardioMin = Number.isInteger(s.cardioMin) ? s.cardioMin : CARDIO_MIN; }
   }
   if (hasText(s.banner)) out.banner = String(s.banner).trim();
+  // Substituts per màquina ocupada: «índex:clau original» → clau del substitut.
+  const subs = {};
+  for (const [k, v] of Object.entries(s.subs || {})) if (/^\d+:[a-z0-9]+$/.test(k) && EX_BY_KEY[v]) subs[k] = v;
+  if (Object.keys(subs).length) out.subs = subs;
   return out;
 }
 
