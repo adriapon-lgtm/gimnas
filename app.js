@@ -138,6 +138,7 @@ const state = {
   skipping: '', // clau de la targeta on s'està triant el motiu per saltar
   skipZone: false, // s'ha triat «molèstia» i falta la zona
   skipSub: false, // s'ha triat «màquina ocupada» i es mostren els substituts
+  open: {}, // elements desplegats a mà (fets o pendents), per índex d'exercici o 'warm'
   swimDate: '', // data del formulari de natació obert
   comp: null, // proposta de sessió de compensació en edició (encara no desada)
 };
@@ -145,7 +146,7 @@ const state = {
 const currentKey = () => keyOf(state.date, state.day);
 const getSession = () => sessions[currentKey()] || null;
 // En canviar de dia o de data, es tanquen les coses a mig fer (motiu de salt, natació, compensació).
-const resetTransient = () => { state.comp = null; state.swimDate = ''; state.skipping = ''; state.skipZone = false; state.skipSub = false; };
+const resetTransient = () => { state.comp = null; state.swimDate = ''; state.skipping = ''; state.skipZone = false; state.skipSub = false; state.open = {}; };
 
 function ensureSession() {
   const k = currentKey();
@@ -618,6 +619,14 @@ function lastText(last, ex) {
   return `Última: ${bits.join(' · ')}`;
 }
 
+// Text del pes per als blocs de sèrie: el que has posat, o el proposat en gris.
+const kgLabel = (ex, s, tip, last) => {
+  if (!ex.weight) return isTimed(ex) ? 'segons' : 'rep.';
+  const v = s?.kg?.[ex.key];
+  const shown = hasText(v) ? v : (tip?.kg ?? last?.kg ?? '');
+  return shown ? `${shown} kg` : 'kg';
+};
+
 function exerciseInner(ex, i, s) {
   const k = setKey(i, ex);
   const n = countOf(s, i, ex);
@@ -629,29 +638,30 @@ function exerciseInner(ex, i, s) {
   const unit = isTimed(ex) ? 'Segons' : 'Repeticions';
   const day = dayOf(s) || dayById(state.day);
   const pair = pairOf(day, i);
-  const fromTag = ex.from ? `<span class="from-tag">${ex.from === 'core' ? 'Core' : ex.from === 'd5' ? 'D5' : `Pendent del ${ex.from.toUpperCase()}`}</span>` : '';
-
-  const cols = Array.from({ length: n }, (_, j) => `
-    <div class="set-col">
-      <button type="button" class="set" data-act="set" data-s="${j}" aria-pressed="${!!sets[j]}" aria-label="Sèrie ${j + 1}">${j + 1}</button>
-      <input class="rep" data-rep="${j}" type="text" inputmode="numeric" autocomplete="off" enterkeyhint="done"
-        value="${esc(reps[j] ?? '')}" placeholder="${esc(last?.reps?.[j] || target)}" aria-label="${unit} de la sèrie ${j + 1}">
-    </div>`).join('');
+  const isNow = trainLayout(day, s).now.has(i);
+  const fromText = ex.from ? (ex.from === 'core' ? 'Core' : ex.from === 'd5' ? 'D5' : `Pendent del ${ex.from.toUpperCase()}`) : '';
+  const m = window.PLAN.muscles?.[ex.key];
 
   const thumb = ex.photo
     ? `<button type="button" class="thumb" data-act="photo" aria-label="Mostra la foto: ${esc(ex.machine)}">
-        <img src="img/${ex.photo}.jpg" alt="" width="72" height="72" loading="lazy" decoding="async"></button>`
+        <img src="img/${ex.photo}.jpg" alt="" width="64" height="64" loading="lazy" decoding="async"></button>`
     : `<div class="thumb none" aria-hidden="true">${esc(ex.place || 'Terra')}</div>`;
+
+  const tags = [
+    pair ? `<span class="tag"><span aria-hidden="true">⇄</span> Supersèrie amb ${esc(pair.name)} · ${restOf(ex, i)} s</span>` : '',
+    ex.subFor ? `<span class="tag"><span aria-hidden="true">↺</span> En lloc de ${esc(ex.subFor)}<button type="button" class="link" data-act="unsub">Desfés</button></span>` : '',
+    fromText ? `<span class="tag">${esc(fromText)}</span>` : '',
+  ].filter(Boolean).join('');
 
   const top = `<div class="ex-top">${thumb}
       <div class="ex-info">
-        <h2><span class="num">${i + 1}.</span>${esc(ex.name)}</h2>
-        <p class="machine">${esc(ex.machine)}</p>
-        <p class="target tabular">${ex.sets} × ${esc(ex.reps)}${fromTag}</p>
-        ${pair ? `<p class="pair-tag"><span aria-hidden="true">⇄</span> Supersèrie amb <b>${esc(pair.name)}</b> · ${restOf(ex, i)} s de descans</p>` : ''}
-        ${ex.subFor ? `<p class="sub-tag"><span aria-hidden="true">↺</span> En lloc de <b>${esc(ex.subFor)}</b> (màquina ocupada) <button type="button" class="link" data-act="unsub">Desfés</button></p>` : ''}
+        <h2>${esc(ex.name)}</h2>
+        <p class="meta tabular">${ex.sets} × ${esc(ex.reps)}${m ? ` · ${esc(muscleNames(m.main).toLowerCase())}` : ''}</p>
+        ${ex.machine && ex.machine !== ex.name ? `<p class="machine">${esc(ex.machine)}</p>` : ''}
+        ${tags ? `<div class="tags">${tags}</div>` : ''}
+        ${isNow ? '' : '<button type="button" class="collapse" data-act="collapse">Amaga ▴</button>'}
       </div>
-      <span class="tick" aria-label="Completat">${ICON_CHECK}</span>
+      ${m && window.MUSCLES ? window.MUSCLES.svg(muscleHl(ex.key), { cls: 'mini' }) : ''}
     </div>`;
 
   if (exSkipped(ex, i, s)) {
@@ -684,25 +694,46 @@ function exerciseInner(ex, i, s) {
       <button type="button" class="ghost" data-act="skip-cancel">Cancel·la</button></div>`;
   }
 
-  let kg = '';
   // El suggeriment es basa en el mateix dia del pla si n'hi ha (el hip thrust del D4 és més pesat que el del D2).
   const hist = historyFor(ex.key, true, 2);
   const tip = suggestion(ex, hist.length ? hist : historyFor(ex.key, false, 2));
   const regress = i === 0 && !day.comp && regression(ex);
+  const sub = kgLabel(ex, s, tip, last);
+
+  // Un bloc gran per sèrie: tocar-lo la marca; el número de dins són les repeticions (o segons).
+  const cols = Array.from({ length: n }, (_, j) => `
+    <div class="set-col" role="button" tabindex="0" data-act="set" data-s="${j}" aria-pressed="${!!sets[j]}" aria-label="Marca la sèrie ${j + 1}">
+      <span class="set-n">Sèrie ${j + 1}<i>${ICON_CHECK}</i></span>
+      <input class="rep" data-rep="${j}" type="text" inputmode="numeric" autocomplete="off" enterkeyhint="done"
+        value="${esc(reps[j] ?? '')}" placeholder="${esc(last?.reps?.[j] || target)}" aria-label="${unit} de la sèrie ${j + 1}">
+      <span class="set-sub">${esc(sub)}</span>
+    </div>`).join('');
+
+  // Pes, última vegada i habitual.
+  const typ = typicalFor(ex.key);
+  const unitShort = isTimed(ex) ? 's' : 'rep.';
+  const lastReps = (last?.reps || []).filter(Boolean).join('/');
+  const facts = [];
   if (ex.weight) {
     const assist = ex.weight === 'assist';
-    kg = `<div class="kg">
-      <label for="kg-${i}">${assist ? 'Assistència' : 'Pes'}</label>
+    facts.push(`<label class="fact kgf" for="kg-${i}"><small>${assist ? 'Assistència' : 'Pes'}</small>
       <span class="kg-input"><input id="kg-${i}" data-key="${esc(ex.key)}" type="text" inputmode="decimal"
-        autocomplete="off" enterkeyhint="done" value="${esc(s?.kg?.[ex.key] ?? '')}" placeholder="${esc(tip?.kg ?? last?.kg ?? '')}"><span>kg</span></span>
-      ${assist ? '<p class="hint">Com menys pes d’assistència, més difícil.</p>' : ''}
-    </div>`;
+        autocomplete="off" enterkeyhint="done" value="${esc(s?.kg?.[ex.key] ?? '')}" placeholder="${esc(tip?.kg ?? last?.kg ?? '')}"><span>kg</span></span></label>`);
   }
+  facts.push(last
+    ? `<div class="fact"><small>Última · ${fmtShort(last.date)}</small><b class="tabular">${last.kg ? `${esc(last.kg)} kg` : esc(lastReps || '—')}</b>${last.kg && lastReps ? `<span class="tabular">${esc(lastReps)}${isTimed(ex) ? ' s' : ''}</span>` : ''}</div>`
+    : '<div class="fact"><small>Última</small><b>—</b><span>Primera vegada</span></div>');
+  facts.push(typ
+    ? `<div class="fact"><small>Habitual</small><b class="tabular">${Number.isFinite(typ.kg) ? `${fmtKg(typ.kg)} kg` : `${fmtKg(typ.reps)} ${unitShort}`}</b>${Number.isFinite(typ.kg) && Number.isFinite(typ.reps) ? `<span class="tabular">${fmtKg(typ.reps)} ${unitShort}</span>` : ''}</div>`
+    : '<div class="fact"><small>Habitual</small><b>—</b><span>Calen 2 sessions</span></div>');
+
   const deload = isDeloadDate(s?.date || state.date) && !day.comp;
   const tipHtml = (tip && !deload
-    ? `<p class="tip ${tip.kind}">${tip.kind === 'up' ? '<span aria-hidden="true">↑</span> ' : ''}<b>${esc(tip.text)}</b> · ${esc(tip.why)}</p>`
-    : '') + (regress ? '<p class="tip down"><b>Has baixat dues sessions seguides.</b> Dorm i menja bé; si continua, fes una setmana de descàrrega.</p>' : '');
-  const settings = (ex.photo
+    ? `<p class="tip ${tip.kind}"><span><b>${esc(tip.text)}</b> · ${esc(tip.why)}</span></p>`
+    : '') + (regress ? '<p class="tip down"><span><b>Has baixat dues sessions seguides.</b> Dorm i menja bé; si continua, fes una setmana de descàrrega.</span></p>' : '');
+
+  // Ajustos de la màquina i pas de pes, plegats; el resum mostra el que tens apuntat.
+  const adjFields = (ex.photo
     ? `<div class="machine-set"><label for="ms-${i}">Ajustos</label>
         <input id="ms-${i}" data-setting="${esc(ex.key)}" type="text" autocomplete="off" enterkeyhint="done"
           value="${esc(machine[ex.key] ?? '')}" placeholder="Seient, coixí, forat…"></div>`
@@ -711,6 +742,8 @@ function exerciseInner(ex, i, s) {
         <span class="kg-input"><input id="st-${i}" data-step="${esc(ex.key)}" type="text" inputmode="decimal" autocomplete="off" enterkeyhint="done"
           value="${esc(steps[ex.key] ?? '')}" placeholder="${fmtKg(KG_STEP)}"><span>kg</span></span></div>`
     : '');
+  const adjSummary = hasText(machine[ex.key]) ? `Ajustos: <b>${esc(machine[ex.key])}</b>` : (ex.photo ? 'Ajustos de la màquina' : 'Pas de pes');
+  const settings = adjFields ? `<details class="adj"><summary>${adjSummary}</summary>${adjFields}</details>` : '';
 
   const animId = ex.anim || ex.key;
   const anim = window.ANIM?.has(animId) ? `<figure class="anim" data-anim="${esc(animId)}"></figure>` : '';
@@ -720,13 +753,11 @@ function exerciseInner(ex, i, s) {
 
   return `
     ${top}
-    ${muscleRow(ex)}
     ${how}
-    <div class="sets" role="group" aria-label="Sèries">${cols}</div>
-    <p class="sets-label">${unit} de cada sèrie</p>
-    ${kg}
-    <p class="last">${lastText(last, ex)}</p>
-    ${(() => { const t = typicalText(typicalFor(ex.key), ex); return t ? `<p class="last typical">${t}</p>` : ''; })()}
+    <div class="sets" role="group" aria-label="Sèries" style="--cols:${Math.min(n, 4) === 1 ? 2 : Math.min(n, 4)}">${cols}</div>
+    <p class="sets-label">Toca un bloc per marcar la sèrie</p>
+    <div class="ex-facts" style="--facts:${facts.length}">${facts.join('')}</div>
+    ${ex.weight === 'assist' ? '<p class="hint">Com menys pes d’assistència, més difícil.</p>' : ''}
     ${tipHtml}
     ${settings}
     <div class="ex-ctrl">
@@ -754,13 +785,6 @@ function muscleHl(key) {
   m.aux.forEach((id) => { hl[id] = 'aux'; });
   m.main.forEach((id) => { hl[id] = 'on'; });
   return hl;
-}
-
-function muscleRow(ex) {
-  const m = window.PLAN.muscles?.[ex.key];
-  if (!m || !window.MUSCLES) return '';
-  return `<div class="mus-row">${window.MUSCLES.svg(muscleHl(ex.key), { cls: 'mini' })}
-    <p class="mus-names"><b>${esc(muscleNames(m.main))}</b>${m.aux.length ? `<small>+ ${esc(muscleNames(m.aux))}</small>` : ''}</p></div>`;
 }
 
 // Músculs de la sessió actual, segons les sèries marcades: principals amb el nombre de sèries.
@@ -793,7 +817,56 @@ function renderMusclesToday() {
 }
 
 const exerciseCard = (ex, i, s) =>
-  `<li class="ex${exDone(ex, i, s) ? ' done' : ''}${exSkipped(ex, i, s) ? ' skipped' : ''}" data-i="${i}">${exerciseInner(ex, i, s)}</li>`;
+  `<div class="ex${exDone(ex, i, s) ? ' done' : ''}${exSkipped(ex, i, s) ? ' skipped' : ''}" data-i="${i}">${exerciseInner(ex, i, s)}</div>`;
+
+// Estat de cada element de la sessió per agrupar-los en «Fet», «Ara» i «Després».
+// «Ara» és el primer que queda per fer i, si va en supersèrie, també la seva parella.
+function trainLayout(day, s) {
+  const items = [{ id: 'warm', st: s?.warm ? 'done' : 'todo' }];
+  day.exercises.forEach((ex, i) => items.push({ id: i, ex, st: exSkipped(ex, i, s) ? 'skipped' : exDone(ex, i, s) ? 'done' : 'todo' }));
+  items.push({ id: 'cardio', st: s?.cardio ? 'done' : 'todo' });
+  const now = new Set();
+  const first = s?.finished ? null : items.find((it) => it.st === 'todo');
+  if (first) {
+    now.add(first.id);
+    if (typeof first.id === 'number') {
+      const partner = pairOf(day, first.id);
+      const pi = partner ? day.exercises.indexOf(partner) : -1;
+      if (pi >= 0 && items[pi + 1].st === 'todo') now.add(pi);
+    }
+  }
+  return { items, now };
+}
+
+// Fila compacta d'un exercici: fet, saltat o pendent. Un toc la desplega.
+function compactCard(ex, i, s, day) {
+  const k = setKey(i, ex);
+  const skipped = exSkipped(ex, i, s);
+  const done = !skipped && exDone(ex, i, s);
+  const n = countOf(s, i, ex);
+  const doneSets = (s?.sets?.[k] || []).slice(0, n).filter(Boolean).length;
+  const reps = (s?.reps?.[k] || []).slice(0, n).filter(hasText);
+  const kg = ex.weight ? String(s?.kg?.[ex.key] ?? '').trim() : '';
+  const pair = pairOf(day, i);
+  let sub, right;
+  if (skipped) {
+    sub = `Saltat · ${skipText(skipInfo(s.skip[k]))}`;
+    right = '';
+  } else if (done || doneSets) {
+    sub = reps.length ? `${reps.join('/')}${isTimed(ex) ? ' s' : ' rep.'}` : `${doneSets} de ${n} sèries`;
+    right = kg ? `${kg} kg` : `${doneSets}/${n}`;
+  } else {
+    sub = ex.subFor ? `En lloc de ${ex.subFor}` : pair ? `Supersèrie amb ${pair.name}` : ex.machine;
+    right = `${n} × ${ex.reps}`;
+  }
+  const dot = done ? ICON_CHECK : skipped ? '–' : i + 1;
+  return `<div class="ex compact${done ? ' done' : ''}${skipped ? ' skipped' : ''}" data-i="${i}">
+    <button type="button" class="ex-row" data-act="expand" aria-expanded="false">
+      <span class="dot tabular">${dot}</span>
+      <span class="row-main"><b>${esc(ex.name)}</b><small>${esc(sub)}</small></span>
+      <span class="row-v tabular">${esc(right)}</span>
+    </button></div>`;
+}
 
 // Torna a pintar una targeta i manté «Com fer-ho» obert si ho estava.
 function refreshCard(card) {
@@ -826,9 +899,20 @@ function syncCard(card) {
   const done = exDone(ex, i, getSession());
   card.classList.toggle('done', done);
   const btn = card.querySelector('.complete');
+  if (!btn) return;
   btn.setAttribute('aria-pressed', String(done));
   btn.innerHTML = done ? `${ICON_CHECK} Completat` : 'Completa';
 }
+
+// Torna a pintar la pantalla quan un element canvia de grup (fet, saltat o pendent).
+// Si ha passat a fet, porta a la vista el que toca ara.
+function relayout(towardsNow) {
+  renderTrain();
+  if (towardsNow) trainEl.querySelector('#now .group-title')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// Grup (fet, saltat o pendent) d'un element, per saber si s'ha de reordenar la pantalla.
+const statusOf = (ex, i, s) => (exSkipped(ex, i, s) ? 'skipped' : exDone(ex, i, s) ? 'done' : 'todo');
 
 function resetIdle() {
   return '<button type="button" class="ghost danger-text" data-act="reset">Reinicia la sessió</button>';
@@ -848,12 +932,9 @@ function sessionHead(day, { chip = '' } = {}) {
   return `<header class="session-head" id="session-head">
     <p class="eyebrow">${day.id.toUpperCase()} · ${fmtLong(state.date)}</p>
     <h1>${esc(day.title)}</h1>
-    <p class="focus">${esc(day.focus)} <span class="dur tabular">≈ ${dayMinutes(day)} min</span>${chip}</p>
-    <div class="ring" role="img" aria-label="Progrés de la sessió">
-      <svg viewBox="0 0 72 72"><circle class="track" cx="36" cy="36" r="30"/><circle class="fill" id="progress-fill" cx="36" cy="36" r="30"/></svg>
-      <b id="progress-pct"></b>
-    </div>
-    <p class="progress-text" aria-live="polite"><span id="progress-label"></span></p>
+    <p class="focus"><span>${esc(day.focus)}</span><span class="dur tabular">≈ ${dayMinutes(day)} min</span>${chip}</p>
+    <div class="pbar" role="progressbar" aria-label="Progrés de la sessió" aria-valuemin="0" aria-valuemax="100"><i id="progress-fill"></i></div>
+    <p class="progress-text" aria-live="polite"><span id="progress-label"></span><span id="progress-sets" class="tabular"></span></p>
   </header>`;
 }
 
@@ -880,9 +961,19 @@ function renderTrain() {
   const deload = isDeloadDate(state.date) && !day.comp;
   parts.push(sessionHead(day, { chip: deload ? '<span class="dur">Descàrrega</span>' : '' }));
 
-  parts.push(checkItem('warm', 'Escalfament', window.PLAN.warmup.time, warmupItems(day), !!s?.warm));
-  parts.push(`<ol class="exercises">${day.exercises.map((ex, i) => exerciseCard(ex, i, s)).join('')}</ol>`);
-  parts.push(checkItem('cardio', 'Cardio', day.cardio, null, !!s?.cardio));
+  // Fet / Ara / Després. El que toca ara va desplegat; la resta, en files compactes que es despleguen amb un toc.
+  const { items, now } = trainLayout(day, s);
+  const render = (it) => {
+    if (it.id === 'warm') return checkItem('warm', 'Escalfament', window.PLAN.warmup.time, now.has('warm') || state.open.warm ? warmupItems(day) : null, !!s?.warm);
+    if (it.id === 'cardio') return checkItem('cardio', 'Cardio', day.cardio, null, !!s?.cardio);
+    return now.has(it.id) || state.open[it.id] ? exerciseCard(it.ex, it.id, s) : compactCard(it.ex, it.id, s, day);
+  };
+  const group = (title, list, id = '') => (list.length
+    ? `<section class="group"${id ? ` id="${id}"` : ''}><h3 class="group-title">${title}</h3>${list.map(render).join('')}</section>`
+    : '');
+  parts.push(group('Fet', items.filter((it) => it.st !== 'todo')));
+  parts.push(group('Ara', items.filter((it) => now.has(it.id)), 'now'));
+  parts.push(group(s?.finished ? 'Sense fer' : 'Després', items.filter((it) => it.st === 'todo' && !now.has(it.id))));
   parts.push('<section class="card muscles-today" id="muscles-today" aria-label="Músculs treballats avui"></section>');
   parts.push('<div class="finish" id="finish"></div>');
   parts.push(`<div class="reset" id="reset">${resetIdle()}</div>`);
@@ -901,10 +992,17 @@ function updateProgress() {
     : done === total
       ? `<b>Sessió completada</b>${skippedText}`
       : `<b>${done}</b> de ${total} completats${skippedText}`;
-  $('#progress-pct').textContent = `${pct}%`;
-  const C = 2 * Math.PI * 30; // perímetre del cercle de l'anell
-  $('#progress-fill').style.strokeDasharray = C;
-  $('#progress-fill').style.strokeDashoffset = C * (1 - pct / 100);
+  $('#progress-fill').style.width = `${pct}%`;
+  $('#progress-fill').parentElement.setAttribute('aria-valuenow', String(pct));
+  const day = currentDay();
+  let setsDone = 0, setsPlanned = 0;
+  day.exercises.forEach((ex, i) => {
+    const n = countOf(s, i, ex);
+    if (exSkipped(ex, i, s)) return;
+    setsPlanned += n;
+    setsDone += (s?.sets?.[setKey(i, ex)] || []).slice(0, n).filter(Boolean).length;
+  });
+  $('#progress-sets').textContent = `${setsDone} de ${setsPlanned} sèries`;
   $('#session-head').classList.toggle('is-complete', finished || done === total);
   const fin = $('#finish');
   if (fin) fin.innerHTML = finishBlock(s);
@@ -1231,12 +1329,15 @@ function toggleSet(card, btn) {
   arr[j] = !arr[j];
   if (arr.some(Boolean)) s.sets[k] = arr; else delete s.sets[k];
   btn.setAttribute('aria-pressed', String(arr[j]));
-  if (exDone(ex, i, s) && !wasDone) buzz();
+  const nowDone = exDone(ex, i, s);
+  if (nowDone && !wasDone) buzz();
   if (arr[j]) {
     const pair = pairOf(currentDay(), i);
     startRest(restOf(ex, i), pair ? `Ara: ${pair.name}` : 'Descans');
   }
   save(s);
+  // Si l'exercici acaba de quedar fet (o deixa de ser-ho), canvia de grup.
+  if (nowDone !== wasDone) { delete state.open[i]; relayout(nowDone); return; }
   syncCard(card);
   updateProgress();
 }
@@ -1246,26 +1347,30 @@ function toggleComplete(card) {
   const { i, ex, k } = exerciseOf(card);
   const s = ensureSession();
   const n = countOf(s, i, ex);
-  if (exDone(ex, i, s)) {
+  const wasDone = exDone(ex, i, s);
+  if (wasDone) {
     delete s.sets[k];
   } else {
     s.sets[k] = Array(n).fill(true);
     buzz();
   }
   save(s);
-  refreshCard(card);
-  updateProgress();
+  delete state.open[i];
+  relayout(!wasDone);
 }
 
 function changeCount(card, delta) {
   const { i, ex, k } = exerciseOf(card);
   const s = ensureSession();
+  const before = statusOf(ex, i, s);
   const n = Math.min(MAX_SETS, Math.max(1, countOf(s, i, ex) + delta));
   // En descàrrega es desa sempre, perquè el valor no depengui de quina setmana és la de descàrrega.
   if (n === ex.sets && !isDeloadDate(s.date)) delete s.count[k]; else s.count[k] = n;
   if (s.sets[k]) s.sets[k] = sized(s.sets[k], n, false);
   if (s.reps[k]) s.reps[k] = sized(s.reps[k], n, '');
   save(s);
+  const after = statusOf(ex, i, s);
+  if (after !== before) { delete state.open[i]; relayout(after === 'done'); return; }
   refreshCard(card);
   updateProgress();
 }
@@ -1273,20 +1378,27 @@ function changeCount(card, delta) {
 function toggleField(field) {
   const s = ensureSession();
   s[field] = !s[field];
-  const wrap = trainEl.querySelector(`.check[data-field="${field}"]`);
-  wrap.classList.toggle('done', s[field]);
-  wrap.querySelector('.check-btn').setAttribute('aria-pressed', String(s[field]));
   if (s[field]) buzz();
   save(s);
-  updateProgress();
+  delete state.open[field];
+  relayout(s[field]);
 }
 
 trainEl.addEventListener('click', (e) => {
+  // Escriure les repeticions dins d'un bloc de sèrie no l'ha de marcar.
+  if (e.target.matches('input, select, textarea')) return;
   const btn = e.target.closest('[data-act]');
   if (!btn) return;
   const act = btn.dataset.act;
   const card = btn.closest('.ex');
 
+  if (act === 'expand' || act === 'collapse') {
+    const i = Number(card.dataset.i);
+    if (act === 'expand') state.open[i] = true; else delete state.open[i];
+    renderTrain();
+    trainEl.querySelector(`.ex[data-i="${i}"]`)?.scrollIntoView({ block: 'nearest' });
+    return;
+  }
   if (act === 'set') toggleSet(card, btn);
   else if (act === 'complete') toggleComplete(card);
   else if (act === 'more') changeCount(card, 1);
@@ -1340,8 +1452,10 @@ trainEl.addEventListener('click', (e) => {
     state.skipping = '';
     state.skipSub = false;
     save(s);
-    refreshCard(card);
-    updateProgress();
+    // Saltat amb molèstia: queda desplegat per poder escriure la nota i veure l'avís.
+    const i = Number(card.dataset.i);
+    if (act === 'skip-zone') state.open[i] = true; else delete state.open[i];
+    relayout(act !== 'unskip' && act !== 'skip-zone');
   } else if (act === 'deload-yes' || act === 'deload-no' || act === 'deload-undo') {
     const monday = mondayOf(todayISO());
     if (act === 'deload-yes') { meta.prevDeload = meta.lastDeload || ''; meta.lastDeload = monday; meta.deloadWeek = monday; setDeloadWeek(monday, true); }
@@ -1413,6 +1527,9 @@ trainEl.addEventListener('input', (e) => {
     const v = input.value.trim();
     if (v) s.kg[input.dataset.key] = v; else delete s.kg[input.dataset.key];
     save(s);
+    // Els blocs de sèrie mostren el pes que escrius.
+    const shown = v || input.placeholder;
+    input.closest('.ex')?.querySelectorAll('.set-sub').forEach((el) => { el.textContent = shown ? `${shown} kg` : 'kg'; });
   } else if (input.matches('input[data-setting]')) {
     const v = input.value.trim();
     if (v) machine[input.dataset.setting] = v; else delete machine[input.dataset.setting];
@@ -1448,6 +1565,11 @@ trainEl.addEventListener('input', (e) => {
 
 trainEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && e.target.matches('input')) e.target.blur();
+  // Els blocs de sèrie també es marquen amb el teclat.
+  else if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('.set-col')) {
+    e.preventDefault();
+    toggleSet(e.target.closest('.ex'), e.target);
+  }
 });
 
 // L'animació només corre mentre «Com fer-ho» és obert. (`toggle` no fa bombolla.)
@@ -1985,7 +2107,7 @@ function renderStats() {
     <h2 class="sec">Últimes 8 setmanes</h2>
     ${weeksChart(weeks)}
     <p class="chart-info" id="week-info">${weekInfo(cur)}</p>
-    <p class="chart-note">Fons clar: entrenaments planificats. Columna: fets. En verd, setmanes completes. Toca una setmana per veure'n el detall.</p>
+    <p class="chart-note">Fons clar: entrenaments planificats. Columna: fets. En verd fosc, setmanes completes. Toca una setmana per veure'n el detall.</p>
 
     <h2 class="sec">Progrés per exercici</h2>
     ${exBlock}`;

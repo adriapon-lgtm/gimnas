@@ -1,6 +1,6 @@
 // Puja VERSION cada vegada que canviïs qualsevol fitxer de l'app,
 // perquè el mòbil descarregui la versió nova.
-const VERSION = 'v20';
+const VERSION = 'v21';
 const CACHE = `gimnas-${VERSION}`;
 
 const PHOTOS = [
@@ -21,6 +21,8 @@ const ASSETS = [
   'icons/icon-192.png',
   'icons/icon-512.png',
   'icons/icon-maskable-512.png',
+  'fonts/manrope-latin.woff2',
+  'fonts/manrope-latin-ext.woff2',
   ...PHOTOS.map((p) => `img/${p}.jpg`),
 ];
 
