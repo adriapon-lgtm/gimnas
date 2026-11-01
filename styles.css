@@ -561,6 +561,8 @@ h1, h2, h3 { letter-spacing: -0.02em; }
 }
 .sets[style*="--cols:4"] .rep { font-size: 26px; }
 .rep:focus { outline: none; background: color-mix(in srgb, var(--surface) 70%, transparent); }
+.rep[readonly] { cursor: pointer; }
+.rep[readonly]:focus { background: transparent; }
 .rep::placeholder { color: var(--muted); opacity: 0.45; font-weight: 700; }
 
 .set-col[aria-pressed="true"] { background: var(--accent); }

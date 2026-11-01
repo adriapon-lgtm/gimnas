@@ -704,7 +704,7 @@ function exerciseInner(ex, i, s) {
   const cols = Array.from({ length: n }, (_, j) => `
     <div class="set-col" role="button" tabindex="0" data-act="set" data-s="${j}" aria-pressed="${!!sets[j]}" aria-label="Marca la sèrie ${j + 1}">
       <span class="set-n">Sèrie ${j + 1}<i>${ICON_CHECK}</i></span>
-      <input class="rep" data-rep="${j}" type="text" inputmode="numeric" autocomplete="off" enterkeyhint="done"
+      <input class="rep" data-rep="${j}" type="text" inputmode="numeric" autocomplete="off" enterkeyhint="done"${sets[j] ? '' : ' readonly'}
         value="${esc(reps[j] ?? '')}" placeholder="${esc(last?.reps?.[j] || target)}" aria-label="${unit} de la sèrie ${j + 1}">
       <span class="set-sub">${esc(sub)}</span>
     </div>`).join('');
@@ -755,7 +755,7 @@ function exerciseInner(ex, i, s) {
     ${top}
     ${how}
     <div class="sets" role="group" aria-label="Sèries" style="--cols:${Math.min(n, 4) === 1 ? 2 : Math.min(n, 4)}">${cols}</div>
-    <p class="sets-label">Toca un bloc per marcar la sèrie</p>
+    <p class="sets-label">Toca el bloc per marcar la sèrie · després toca el número per apuntar ${isTimed(ex) ? 'els segons' : 'les repeticions'}</p>
     <div class="ex-facts" style="--facts:${facts.length}">${facts.join('')}</div>
     ${ex.weight === 'assist' ? '<p class="hint">Com menys pes d’assistència, més difícil.</p>' : ''}
     ${tipHtml}
@@ -826,13 +826,20 @@ function trainLayout(day, s) {
   day.exercises.forEach((ex, i) => items.push({ id: i, ex, st: exSkipped(ex, i, s) ? 'skipped' : exDone(ex, i, s) ? 'done' : 'todo' }));
   items.push({ id: 'cardio', st: s?.cardio ? 'done' : 'todo' });
   const now = new Set();
+  const addEx = (it) => {
+    now.add(it.id);
+    const partner = pairOf(day, it.id);
+    const pi = partner ? day.exercises.indexOf(partner) : -1;
+    if (pi >= 0 && items[pi + 1].st === 'todo') now.add(pi);
+  };
   const first = s?.finished ? null : items.find((it) => it.st === 'todo');
   if (first) {
-    now.add(first.id);
-    if (typeof first.id === 'number') {
-      const partner = pairOf(day, first.id);
-      const pi = partner ? day.exercises.indexOf(partner) : -1;
-      if (pi >= 0 && items[pi + 1].st === 'todo') now.add(pi);
+    if (typeof first.id === 'number') addEx(first);
+    else {
+      now.add(first.id);
+      // Mentre l'escalfament està pendent, el primer exercici també es mostra desplegat.
+      const nextEx = first.id === 'warm' ? items.find((it) => typeof it.id === 'number' && it.st === 'todo') : null;
+      if (nextEx) addEx(nextEx);
     }
   }
   return { items, now };
@@ -1329,6 +1336,9 @@ function toggleSet(card, btn) {
   arr[j] = !arr[j];
   if (arr.some(Boolean)) s.sets[k] = arr; else delete s.sets[k];
   btn.setAttribute('aria-pressed', String(arr[j]));
+  // El número del bloc només s'edita quan la sèrie està marcada.
+  const rep = btn.querySelector('.rep');
+  if (rep) { rep.readOnly = !arr[j]; rep.blur(); }
   const nowDone = exDone(ex, i, s);
   if (nowDone && !wasDone) buzz();
   if (arr[j]) {
@@ -1385,8 +1395,9 @@ function toggleField(field) {
 }
 
 trainEl.addEventListener('click', (e) => {
-  // Escriure les repeticions dins d'un bloc de sèrie no l'ha de marcar.
-  if (e.target.matches('input, select, textarea')) return;
+  // Escriure les repeticions d'una sèrie ja marcada no la desmarca. Si encara no està marcada,
+  // el número és només de lectura i tocar-lo marca la sèrie com la resta del bloc.
+  if (e.target.matches('input, select, textarea') && !e.target.readOnly) return;
   const btn = e.target.closest('[data-act]');
   if (!btn) return;
   const act = btn.dataset.act;
